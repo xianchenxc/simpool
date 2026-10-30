@@ -48,6 +48,12 @@ test("setup installs skills and hooks for both agents and is idempotent", () => 
   assert.ok(log.some((l) => l.includes("already up to date")));
   assert.ok(log.some((l) => l.includes("/hooks")));
 
+  // Switching to cooperative mode drops the hook but keeps the skill.
+  setup({ agents: ["claude"], home, hook: false, log: () => {} });
+  const cooperative = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8"));
+  assert.equal(cooperative.hooks.PreToolUse, undefined);
+  assert.match(readFileSync(join(home, ".claude", "skills", "simpool", "SKILL.md"), "utf8"), /name: simpool/);
+
   setup({ agents: ["claude", "codex"], home, remove: true, log: () => {} });
   const removed = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8"));
   assert.equal(removed.hooks.PreToolUse, undefined);

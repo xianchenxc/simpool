@@ -76,6 +76,8 @@ function readJson(file: string): HooksDoc {
 
 export interface SetupOptions {
   agents: Agent[];
+  /** false installs the skill only (cooperative mode) and drops any simpool hook. */
+  hook?: boolean;
   remove?: boolean;
   dryRun?: boolean;
   home?: string;
@@ -85,7 +87,7 @@ export interface SetupOptions {
 export function setup(options: SetupOptions): void {
   const log = options.log ?? ((line: string) => console.error(line));
   const all = targets(options.home ?? homedir());
-  const command = options.remove ? undefined : hookCommand();
+  const command = options.remove || options.hook === false ? undefined : hookCommand();
 
   for (const agent of options.agents) {
     const target = all[agent];
@@ -114,7 +116,8 @@ export function setup(options: SetupOptions): void {
         mkdirSync(target.skillDir, { recursive: true });
         copyFileSync(SKILL_SOURCE, join(target.skillDir, "SKILL.md"));
       }
-      if (target.note && changed) log(`${agent}: ${target.note}`);
+      if (!command) log(`${agent}: cooperative mode, no hook: agents follow the skill but nothing enforces it.`);
+      else if (target.note && changed) log(`${agent}: ${target.note}`);
     }
   }
 }

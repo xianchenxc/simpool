@@ -47,6 +47,17 @@ simpool hook in `/hooks`. Use `simpool setup --claude` or `--codex` for one
 agent, `--dry-run` to preview, and `--remove` to uninstall. Existing files are
 backed up to `*.simpool-backup`.
 
+### Enforced or cooperative
+
+| Mode | Install | Behavior |
+|---|---|---|
+| **Enforced** (default) | `simpool setup` | Skill + hook. Simulator calls outside your lease are denied. |
+| **Cooperative** | `simpool setup --no-hook` | Skill only. Agents lease devices because the skill tells them to; nothing stops one that doesn't. |
+
+Cooperative mode suits agents without hook support, or when you still drive
+other simulators by hand. Run `setup` again with or without `--no-hook` to
+switch.
+
 Requires macOS with Xcode and Node 22.18+.
 
 ## Usage

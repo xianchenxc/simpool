@@ -17,7 +17,7 @@ Usage:
   simpool release [--slot <slot> [--force]] [--shutdown]
   simpool status [--json]
   simpool gc
-  simpool setup [--claude] [--codex] [--remove] [--dry-run]
+  simpool setup [--claude] [--codex] [--no-hook] [--remove] [--dry-run]
   simpool hook                      (PreToolUse hook; reads the payload on stdin)
 
 lease and challenge print the UDID on stdout; everything else goes to stderr.
@@ -74,6 +74,7 @@ function main(argv: string[]): void {
       claude: { type: "boolean" },
       codex: { type: "boolean" },
       remove: { type: "boolean" },
+      "no-hook": { type: "boolean" },
       "dry-run": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
@@ -148,6 +149,7 @@ function main(argv: string[]): void {
       if (values.codex) picked.push("codex");
       setup({
         agents: picked.length ? picked : ["claude", "codex"],
+        hook: !values["no-hook"],
         remove: values.remove,
         dryRun: values["dry-run"],
       });

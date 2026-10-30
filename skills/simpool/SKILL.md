@@ -7,8 +7,8 @@ description: Lease an iOS simulator from simpool before building, installing, la
 
 This machine runs several coding agents in parallel. Never pick a simulator
 yourself, never use `booted`, and never touch a device whose name starts with 🔒
-unless `simpool` gave it to you. A PreToolUse hook rejects simulator calls
-that break these rules.
+unless `simpool` gave it to you. When the simpool hook is installed it rejects
+simulator calls that break these rules; without it, following them is up to you.
 
 ## 1. Lease before any simulator work
 
