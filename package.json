@@ -1,0 +1,44 @@
+{
+  "name": "simpool",
+  "version": "0.1.0",
+  "description": "Lease simulators to parallel AI coding agents (Claude Code, Codex) so they never fight over the same device.",
+  "keywords": [
+    "ios",
+    "simulator",
+    "simctl",
+    "claude-code",
+    "codex",
+    "ai-agents",
+    "worktree"
+  ],
+  "license": "MIT",
+  "author": "xianchenxc",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xianchenxc/simpool.git"
+  },
+  "type": "module",
+  "bin": {
+    "simpool": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "skills"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "os": [
+    "darwin"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'test/**/*.test.ts'",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
+  }
+}
