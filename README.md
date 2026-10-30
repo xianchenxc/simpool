@@ -10,7 +10,7 @@ simulator and port, and a hook makes sure agents actually stick to it.
 ```bash
 $ simpool lease ios
 🔒 ios-2 for "feat/checkout" — port 8082
-4C7F6417-821F-461C-9FFA-433F200D672F
+0F1E2D3C-4B5A-4978-8796-A5B4C3D2E1F0
 ```
 
 - 🔒 **Leases per worktree.** Sticky: the same worktree always gets the same
