@@ -107,7 +107,7 @@ test("authorize accepts slot, UDID and device name, and renews the lease", () =>
   clock.now += 50 * MINUTE;
 
   for (const target of ["ios-1", held.udid, "🔒 a · simpool ios-1"]) {
-    assert.deepEqual(pool.authorize(a, target), { ok: true, slot: "ios-1" });
+    assert.deepEqual(pool.authorize({ owner: a }, target), { ok: true, slot: "ios-1" });
   }
   clock.now += 50 * MINUTE;
   assert.equal(pool.status()[0]?.stale, undefined);

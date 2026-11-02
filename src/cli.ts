@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { type Platform, loadConfig } from "./config.ts";
 import { type HookPayload, denyOutput, evaluate, isSimulatorTool } from "./hook.ts";
-import { defaultLabel, resolveOwner } from "./owner.ts";
+import { ancestry, claimantOwner, defaultLabel, resolveOwner } from "./owner.ts";
 import { type Holding, Pool, SimpoolError, describeLease } from "./pool.ts";
 import { type Agent, setup } from "./setup.ts";
 import { Simctl } from "./simctl.ts";
@@ -11,14 +11,20 @@ import { Simctl } from "./simctl.ts";
 const USAGE = `simpool — lease simulators to parallel AI agents
 
 Usage:
-  simpool lease ios [--label <name>] [--agent <name>] [--json] [--no-boot]
-  simpool challenge <slot> [--json]
-  simpool renew
-  simpool release [--slot <slot> [--force]] [--shutdown]
+  simpool lease ios [<identity>] [--label <name>] [--agent <name>] [--json] [--no-boot]
+  simpool challenge <slot> [<identity>] [--json]
+  simpool renew [<identity>]
+  simpool release [<identity>] [--slot <slot> [--force]] [--shutdown]
   simpool status [--json]
   simpool gc
   simpool setup [--claude] [--codex] [--no-hook] [--remove] [--dry-run]
   simpool hook                      (PreToolUse hook; reads the payload on stdin)
+
+Identity (who holds the lease; at most one):
+  --worktree <path>   a git worktree (default: the one containing the current directory)
+  --pid <pid>         a process, e.g. the agent's: --pid "$CLAUDE_PID"
+  --session <id>      an agent session id
+  --id <string>       any name; also read from SIMPOOL_ID, which the hook checks too
 
 lease and challenge print the UDID on stdout; everything else goes to stderr.
 Exit code 3 means refused: the pool is full or the holder is still live.`;
@@ -50,8 +56,15 @@ function runHook(pool: Pool): void {
   }
   if (!isSimulatorTool(payload.tool_name ?? "")) return;
   try {
-    const owner = resolveOwner(payload.cwd ?? process.cwd());
-    const reason = evaluate(payload, pool, owner);
+    let ancestors: Set<string> | undefined;
+    const caller = {
+      owner: resolveOwner(payload.cwd ?? process.cwd()),
+      session: payload.session_id,
+      id: process.env.SIMPOOL_ID || undefined,
+      // The hook runs as a child of the agent, so the agent's pid is among our ancestors.
+      ancestors: () => (ancestors ??= ancestry()),
+    };
+    const reason = evaluate(payload, pool, caller);
     if (reason) console.log(denyOutput(`simpool: ${reason}`));
   } catch (error) {
     // Fail open: a broken pool must not block every shell command.
@@ -66,6 +79,10 @@ function main(argv: string[]): void {
     options: {
       label: { type: "string" },
       agent: { type: "string" },
+      worktree: { type: "string" },
+      pid: { type: "string" },
+      session: { type: "string" },
+      id: { type: "string" },
       slot: { type: "string" },
       json: { type: "boolean" },
       "no-boot": { type: "boolean" },
@@ -88,13 +105,23 @@ function main(argv: string[]): void {
   const pool = new Pool(loadConfig(), new Simctl());
   if (command === "hook") return runHook(pool);
 
-  const owner = resolveOwner(process.cwd());
+  let owner: string;
+  try {
+    owner = claimantOwner(
+      { worktree: values.worktree, pid: values.pid, session: values.session, id: values.id },
+      process.env,
+      process.cwd(),
+    );
+  } catch (error) {
+    throw new SimpoolError((error as Error).message);
+  }
   const claimant = {
     owner,
-    label: values.label ?? defaultLabel(owner),
+    label: values.label ?? defaultLabel(resolveOwner(values.worktree ?? process.cwd())),
     agent: values.agent ?? process.env.SIMPOOL_AGENT,
-    // The hook fills in the real session id on the first simulator call.
-    session: process.env.SIMPOOL_SESSION,
+    // Recorded so the hook recognises this session even after it cd's elsewhere. Without
+    // one, the hook fills in the session id on the first simulator call it allows.
+    session: values.session ?? process.env.SIMPOOL_SESSION ?? process.env.CLAUDE_CODE_SESSION_ID,
   };
 
   switch (command) {

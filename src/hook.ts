@@ -1,3 +1,4 @@
+import type { Caller } from "./owner.ts";
 import type { Pool } from "./pool.ts";
 
 /** The PreToolUse payload shared by Claude Code and Codex. */
@@ -28,7 +29,7 @@ export function isSimulatorTool(toolName: string): boolean {
   return toolName === "Bash" || SIMULATOR_MCP.test(toolName);
 }
 
-function checkShell(command: string, pool: Pool, owner: string, session?: string): string | undefined {
+function checkShell(command: string, pool: Pool, caller: Caller): string | undefined {
   if (!SHELL_TRIGGER.test(command)) return undefined;
   if (SIMCTL_BOOTED.test(command)) {
     return `\`booted\` can resolve to another agent's simulator. ${LEASE_HINT}`;
@@ -38,7 +39,7 @@ function checkShell(command: string, pool: Pool, owner: string, session?: string
     known.has(u),
   );
   for (const udid of udids) {
-    const result = pool.authorize(owner, udid, session);
+    const result = pool.authorize(caller, udid);
     if (!result.ok) return result.reason;
   }
   if (udids.length > 0) return undefined;
@@ -55,26 +56,25 @@ function checkMcp(
   toolName: string,
   input: Record<string, unknown>,
   pool: Pool,
-  owner: string,
-  session?: string,
+  caller: Caller,
 ): string | undefined {
   const field = DEVICE_FIELDS.find((name) => typeof input[name] === "string" && input[name] !== "");
   if (!field) {
     return NEEDS_DEVICE[toolName]?.(input) ? `Pass \`device\` explicitly. ${LEASE_HINT}` : undefined;
   }
-  const result = pool.authorize(owner, input[field] as string, session);
+  const result = pool.authorize(caller, input[field] as string);
   return result.ok ? undefined : result.reason;
 }
 
 /** Returns a deny reason, or undefined to let the tool call through. */
-export function evaluate(payload: HookPayload, pool: Pool, owner: string): string | undefined {
+export function evaluate(payload: HookPayload, pool: Pool, caller: Caller): string | undefined {
   const toolName = payload.tool_name ?? "";
   const input = payload.tool_input ?? {};
   if (toolName === "Bash") {
-    return checkShell(String(input.command ?? ""), pool, owner, payload.session_id);
+    return checkShell(String(input.command ?? ""), pool, caller);
   }
   if (SIMULATOR_MCP.test(toolName)) {
-    return checkMcp(toolName, input, pool, owner, payload.session_id);
+    return checkMcp(toolName, input, pool, caller);
   }
   return undefined;
 }

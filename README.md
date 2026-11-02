@@ -79,6 +79,25 @@ simpool gc                                      # free every stale lease now
 `lease` and `challenge` exit with **3** when they refuse: the pool is full of
 live leases, or the device you challenged is still in use.
 
+### Who holds a lease
+
+A lease belongs to an identity. The worktree is the default and the one to
+prefer; pass another with `lease`, `challenge`, `renew` and `release`:
+
+| Identity | Shares the device with | Reclaimed when | The hook recognises it by |
+|---|---|---|---|
+| *(default)* or `--worktree <path>` | every session in that worktree | the worktree is deleted, or idle past the TTL | the git toplevel of the call's cwd |
+| `--pid <pid>` | that process only | the process exits, or idle past the TTL | the pid among the hook's ancestors (`--pid "$CLAUDE_PID"` for the agent) |
+| `--session <id>` | that agent session only | idle past the TTL | the session id in the hook payload |
+| `--id <string>` or `SIMPOOL_ID` | everyone using that string | idle past the TTL | `SIMPOOL_ID` in the agent's environment |
+
+The session that took a lease is recognised too (from `SIMPOOL_SESSION` or
+Claude Code's `CLAUDE_CODE_SESSION_ID`), so an agent that `cd`s into another
+repository keeps its device. Any string is a convention, not isolation: two
+agents with the same id share one device. Export `SIMPOOL_ID` before starting
+the agent so the hook sees it too; an id passed only on the command line can
+lease, but the hook will not let that agent drive the device.
+
 ## What the hook checks
 
 The hook runs before `Bash` calls and simulator MCP tools in both agents.
@@ -118,8 +137,9 @@ picks the newest plain iPhone on the newest runtime that supports it.
   (slot → worktree, label, session, port, timestamps).
 - Every change runs under an atomic `mkdir` lock with stale-lock recovery, so
   simultaneous claims from parallel agents always get distinct devices.
-- The owner of a lease is the git toplevel of the caller's working directory,
-  so every worktree is its own tenant.
+- The owner of a lease is, by default, the git toplevel of the caller's
+  working directory, so every worktree is its own tenant (see
+  [Who holds a lease](#who-holds-a-lease)).
 - Pool devices are created on first use as `simpool ios-N` and reused after
   that; simpool never touches simulators outside the pool.
 

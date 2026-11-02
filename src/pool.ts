@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
 import type { Config, Platform } from "./config.ts";
+import { type Caller, callerHolds, describeOwner, ownerGone, ownerKind } from "./owner.ts";
 import type { SimDevice, Simulators } from "./simctl.ts";
 import { type Lease, type Slot, type State, readState, withState } from "./state.ts";
 
@@ -52,7 +52,7 @@ export function leasedName(slot: string, label: string): string {
 export function describeLease(slot: string, lease: Lease, now: number): string {
   const idle = Math.floor((now - lease.renewedAt) / MINUTE);
   const who = [lease.agent, lease.session && `session ${lease.session}`].filter(Boolean).join(", ");
-  return `${slot} held by "${lease.label}" at ${lease.owner}${who ? ` (${who})` : ""}, idle ${idle} min`;
+  return `${slot} held by "${lease.label}" at ${describeOwner(lease.owner)}${who ? ` (${who})` : ""}, idle ${idle} min`;
 }
 
 export class Pool {
@@ -82,9 +82,10 @@ export class Pool {
   /** Why a lease may be taken over, or undefined while it is live. */
   staleReason(lease: Lease): string | undefined {
     const now = this.now();
-    if (now - lease.leasedAt > this.config.graceMinutes * MINUTE && !existsSync(lease.owner)) {
-      return "worktree removed";
-    }
+    // A worktree may not exist yet right after the lease (created by the same script).
+    const settled = ownerKind(lease.owner) !== "worktree" || now - lease.leasedAt > this.config.graceMinutes * MINUTE;
+    const gone = settled ? ownerGone(lease.owner) : undefined;
+    if (gone) return gone;
     const idle = now - lease.renewedAt;
     if (idle > this.config.ttlMinutes * MINUTE) return `idle ${Math.floor(idle / MINUTE)} min`;
     return undefined;
@@ -259,10 +260,11 @@ export class Pool {
   }
 
   /**
-   * Whether `owner` may drive `target` (slot id, UDID or simulator name). Renews the
-   * lease on success, so every simulator call doubles as a heartbeat.
+   * Whether `caller` may drive `target` (slot id, UDID or simulator name). Renews the
+   * lease on success, so every simulator call doubles as a heartbeat. The session that
+   * holds a lease keeps it even after `cd`-ing elsewhere.
    */
-  authorize(owner: string, target: string, session?: string): Authorization {
+  authorize(caller: Caller, target: string): Authorization {
     return withState(this.config.home, (state) => {
       const slot = Object.keys(state.slots).find((id) => {
         const udid = state.slots[id]?.udid;
@@ -282,14 +284,15 @@ export class Pool {
       if (!lease) {
         return { ok: false, reason: `${slot} is not leased to you. Run \`${leaseCmd}\` and use the UDID it prints.` };
       }
-      if (lease.owner !== owner) {
+      const sameSession = lease.session !== undefined && lease.session === caller.session;
+      if (!sameSession && !callerHolds(lease.owner, caller)) {
         return {
           ok: false,
           reason: `${describeLease(slot, lease, this.now())}. Use your own device (\`${leaseCmd}\`); if that holder is gone, run \`simpool challenge ${slot}\`.`,
         };
       }
       lease.renewedAt = this.now();
-      lease.session = session ?? lease.session;
+      lease.session = caller.session ?? lease.session;
       return { ok: true, slot };
     });
   }

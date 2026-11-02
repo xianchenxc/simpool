@@ -22,6 +22,9 @@ simpool lease ios --json          # {"slot":"ios-2","udid":"…","port":8082,"la
 - Leases are per worktree and sticky: running `lease` again returns the same
   device and renews it. Call it at the start of every verification instead of
   remembering the UDID.
+- Keep the default worktree identity unless the user asks for another
+  (`--pid`, `--session`, `--id`); pass the same identity to `renew` and
+  `release`.
 - The device is booted for you and renamed `🔒 <branch> · simpool ios-N`.
 - If you are on the pool limit, `lease` reclaims a stale lease automatically.
 
