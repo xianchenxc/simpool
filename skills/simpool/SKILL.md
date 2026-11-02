@@ -27,6 +27,11 @@ simpool lease ios --json          # {"slot":"ios-2","udid":"…","port":8082,"la
   `release`.
 - The device is booted for you and renamed `🔒 <branch> · simpool ios-N`.
 - If you are on the pool limit, `lease` reclaims a stale lease automatically.
+- In a sandbox (e.g. Codex), `simpool` fails with a permission error such as
+  `EPERM … ~/.simpool/lock`: it must write the shared pool state and talk to
+  the simulator service. Ask to run the `simpool` command outside the sandbox.
+- Never change `SIMPOOL_HOME` or point simpool at another state directory to
+  get around an error: that creates a separate pool other agents cannot see.
 
 ## 2. Use the UDID and port everywhere
 
