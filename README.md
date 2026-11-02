@@ -91,9 +91,10 @@ prefer; pass another with `lease`, `challenge`, `renew` and `release`:
 | `--session <id>` | that agent session only | idle past the TTL | the session id in the hook payload |
 | `--id <string>` or `SIMPOOL_ID` | everyone using that string | idle past the TTL | `SIMPOOL_ID` in the agent's environment |
 
-The session that took a lease is recognised too (from `SIMPOOL_SESSION` or
-Claude Code's `CLAUDE_CODE_SESSION_ID`), so an agent that `cd`s into another
-repository keeps its device. Any string is a convention, not isolation: two
+The session that took a lease is recognised too (from `SIMPOOL_SESSION`,
+Claude Code's `CLAUDE_CODE_SESSION_ID` or Codex's `CODEX_THREAD_ID`; when one
+agent runs inside another, the nearest one in the process tree wins), so an
+agent that `cd`s into another repository keeps its device. Any string is a convention, not isolation: two
 agents with the same id share one device. Export `SIMPOOL_ID` before starting
 the agent so the hook sees it too; an id passed only on the command line can
 lease, but the hook will not let that agent drive the device.

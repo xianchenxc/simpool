@@ -77,21 +77,55 @@ export function processStart(pid: number): number | undefined {
   }
 }
 
-/** Pid keys of `pid` and every process above it, from one `ps` call. */
-export function ancestry(pid: number = process.pid): Set<string> {
-  const table = new Map<number, { ppid: number; start: number }>();
-  const out = execFileSync("ps", ["-A", "-o", "pid=,ppid=,lstart="], { encoding: "utf8" });
+interface ProcessInfo {
+  pid: number;
+  start: number;
+  command: string;
+}
+
+/** `pid` and every process above it, nearest first, from one `ps` call. */
+function lineage(pid: number): ProcessInfo[] {
+  const table = new Map<number, ProcessInfo & { ppid: number }>();
+  const out = execFileSync("ps", ["-A", "-o", "pid=,ppid=,lstart=,comm="], { encoding: "utf8" });
+  // lstart is always five fields ("Mon Nov  2 10:25:06 2026"); comm may contain spaces.
+  const row = /^\s*(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+[\d:]+\s+\d+)\s+(.*)$/;
   for (const line of out.split("\n")) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
-    if (match) table.set(Number(match[1]), { ppid: Number(match[2]), start: Date.parse(match[3] as string) / 1000 });
+    const match = row.exec(line);
+    if (!match) continue;
+    const [, id, ppid, started, command] = match as unknown as [string, string, string, string, string];
+    table.set(Number(id), { pid: Number(id), ppid: Number(ppid), start: Date.parse(started) / 1000, command });
   }
-  const keys = new Set<string>();
-  let id = pid;
-  for (let current = table.get(id); current && !keys.has(pidKey(id, current.start)); current = table.get(id)) {
-    keys.add(pidKey(id, current.start));
-    id = current.ppid;
+  const chain: ProcessInfo[] = [];
+  for (let current = table.get(pid); current && !chain.includes(current); current = table.get(current.ppid)) {
+    chain.push(current);
   }
-  return keys;
+  return chain;
+}
+
+/** Pid keys of `pid` and every process above it. */
+export function ancestry(pid: number = process.pid): Set<string> {
+  return new Set(lineage(pid).map((p) => pidKey(p.pid, p.start)));
+}
+
+/**
+ * The session id of the agent this process runs under. Agents started from another
+ * agent inherit its variables, so when both Claude's and Codex's are set, the agent
+ * nearest in the process tree wins.
+ */
+export function agentSession(env: NodeJS.ProcessEnv, pid: number = process.pid): string | undefined {
+  if (env.SIMPOOL_SESSION) return env.SIMPOOL_SESSION;
+  const claude = env.CLAUDE_CODE_SESSION_ID || undefined;
+  const codex = env.CODEX_THREAD_ID || env.CODEX_SESSION_ID || undefined;
+  if (!claude || !codex) return claude ?? codex;
+  try {
+    for (const p of lineage(pid)) {
+      if (String(p.pid) === env.CLAUDE_PID) return claude;
+      if (basename(p.command) === "codex") return codex;
+    }
+  } catch {
+    // No ps: fall through.
+  }
+  return undefined;
 }
 
 /**

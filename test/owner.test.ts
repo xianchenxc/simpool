@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
-import { ancestry, callerHolds, claimantOwner, describeOwner, ownerGone, ownerKind } from "../src/owner.ts";
+import {
+  agentSession,
+  ancestry,
+  callerHolds,
+  claimantOwner,
+  describeOwner,
+  ownerGone,
+  ownerKind,
+} from "../src/owner.ts";
 import { MINUTE, fixture } from "./helpers.ts";
 
 test("claimantOwner: flags, then SIMPOOL_ID, then the worktree", () => {
@@ -16,6 +24,17 @@ test("claimantOwner: flags, then SIMPOOL_ID, then the worktree", () => {
   assert.match(claimantOwner({ pid: String(process.pid) }, {}, dir), new RegExp(`^pid:${process.pid}@\\d+$`));
   assert.throws(() => claimantOwner({ id: "x", session: "y" }, {}, dir), /--id and --session/);
   assert.throws(() => claimantOwner({ pid: "nope" }, {}, dir), /No running process/);
+});
+
+test("agentSession reads the nearest agent's session id", () => {
+  assert.equal(agentSession({}), undefined);
+  assert.equal(agentSession({ CLAUDE_CODE_SESSION_ID: "c" }), "c");
+  assert.equal(agentSession({ CODEX_THREAD_ID: "x" }), "x");
+  assert.equal(agentSession({ SIMPOOL_SESSION: "s", CODEX_THREAD_ID: "x" }), "s");
+  // Both set (one agent started the other): the one found first walking up the tree wins.
+  const both = { CLAUDE_CODE_SESSION_ID: "c", CODEX_THREAD_ID: "x" };
+  assert.equal(agentSession({ ...both, CLAUDE_PID: String(process.ppid) }), "c");
+  assert.equal(agentSession({ ...both, CLAUDE_PID: "999999" }), undefined);
 });
 
 test("each kind is held by the matching caller only", () => {

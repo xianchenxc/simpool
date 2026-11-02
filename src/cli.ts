@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { type Platform, loadConfig } from "./config.ts";
 import { type HookPayload, denyOutput, evaluate, isSimulatorTool } from "./hook.ts";
-import { ancestry, claimantOwner, defaultLabel, resolveOwner } from "./owner.ts";
+import { agentSession, ancestry, claimantOwner, defaultLabel, resolveOwner } from "./owner.ts";
 import { type Holding, Pool, SimpoolError, describeLease } from "./pool.ts";
 import { type Agent, setup } from "./setup.ts";
 import { Simctl } from "./simctl.ts";
@@ -121,7 +121,7 @@ function main(argv: string[]): void {
     agent: values.agent ?? process.env.SIMPOOL_AGENT,
     // Recorded so the hook recognises this session even after it cd's elsewhere. Without
     // one, the hook fills in the session id on the first simulator call it allows.
-    session: values.session ?? process.env.SIMPOOL_SESSION ?? process.env.CLAUDE_CODE_SESSION_ID,
+    session: values.session ?? agentSession(process.env),
   };
 
   switch (command) {
