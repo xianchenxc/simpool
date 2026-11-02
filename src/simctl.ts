@@ -16,7 +16,7 @@ export interface Simulators {
   shutdown(udid: string): void;
 }
 
-interface Runtime {
+export interface Runtime {
   identifier: string;
   version: string;
   platform?: string;
@@ -43,6 +43,24 @@ export function pickDeviceType(names: string[]): string | undefined {
   return numbered[0]?.name ?? names.filter((name) => name.startsWith("iPhone")).at(-1);
 }
 
+/**
+ * Picks the device type across every installed iOS runtime first, then the newest runtime
+ * that supports it. Choosing per runtime would settle for whatever a device-specific
+ * runtime offers (iOS 27.1 ships only "iPhone Duo").
+ */
+export function chooseDevice(
+  runtimes: Runtime[],
+  deviceType?: string,
+): { deviceType: string; runtime: string } | undefined {
+  const ios = runtimes
+    .filter((r) => r.platform === "iOS" && r.isAvailable)
+    .sort((a, b) => compareVersions(b.version, a.version));
+  const supported = (r: Runtime) => (r.supportedDeviceTypes ?? []).map((t) => t.name);
+  const type = deviceType ?? pickDeviceType([...new Set(ios.flatMap(supported))]);
+  const runtime = type ? ios.find((r) => supported(r).includes(type)) : undefined;
+  return type && runtime ? { deviceType: type, runtime: runtime.identifier } : undefined;
+}
+
 export class Simctl implements Simulators {
   private run(...args: string[]): string {
     return execFileSync("xcrun", ["simctl", ...args], {
@@ -59,20 +77,14 @@ export class Simctl implements Simulators {
   }
 
   create(name: string, deviceType?: string): string {
-    const runtimes = (JSON.parse(this.run("list", "runtimes", "-j")) as { runtimes: Runtime[] }).runtimes
-      .filter((r) => r.platform === "iOS" && r.isAvailable)
-      .sort((a, b) => compareVersions(b.version, a.version));
-    // Some runtimes (device-specific betas) support only a handful of device types.
-    for (const runtime of runtimes) {
-      const supported = (runtime.supportedDeviceTypes ?? []).map((t) => t.name);
-      const type = deviceType ?? pickDeviceType(supported);
-      if (type && supported.includes(type)) {
-        return this.run("create", name, type, runtime.identifier).trim();
-      }
+    const { runtimes } = JSON.parse(this.run("list", "runtimes", "-j")) as { runtimes: Runtime[] };
+    const choice = chooseDevice(runtimes, deviceType);
+    if (!choice) {
+      throw new Error(
+        `No installed iOS runtime supports ${deviceType ?? "an iPhone"}; install one in Xcode > Settings > Components.`,
+      );
     }
-    throw new Error(
-      `No installed iOS runtime supports ${deviceType ?? "an iPhone"}; install one in Xcode > Settings > Components.`,
-    );
+    return this.run("create", name, choice.deviceType, choice.runtime).trim();
   }
 
   rename(udid: string, name: string): void {
