@@ -1,6 +1,6 @@
 import type { Config, Platform } from "./config.ts";
 import { type Caller, callerHolds, describeOwner, ownerGone, ownerKind } from "./owner.ts";
-import type { SimDevice, Simulators } from "./simctl.ts";
+import type { Device, Devices } from "./platforms/driver.ts";
 import { type Lease, type Slot, type State, readState, withState } from "./state.ts";
 
 export const EXIT_REFUSED = 3;
@@ -22,7 +22,8 @@ export interface Claimant {
 
 export interface Holding {
   slot: string;
-  udid: string;
+  id: string;
+  aliases: string[];
   port: number;
   lease: Lease;
   /** Set when this claim reclaimed a stale lease. */
@@ -31,7 +32,7 @@ export interface Holding {
 
 export interface SlotStatus {
   slot: string;
-  udid?: string;
+  id?: string;
   deviceState?: string;
   lease?: Lease;
   stale?: string;
@@ -57,26 +58,38 @@ export function describeLease(slot: string, lease: Lease, now: number): string {
 
 export class Pool {
   private config: Config;
-  private sims: Simulators;
+  private backends: Record<Platform, Devices>;
   private now: () => number;
 
-  constructor(config: Config, sims: Simulators, now: () => number = Date.now) {
+  /** `backends` maps each configured platform to the driver that manages its devices. */
+  constructor(config: Config, backends: Record<Platform, Devices>, now: () => number = Date.now) {
     this.config = config;
-    this.sims = sims;
+    this.backends = backends;
     this.now = now;
   }
 
+  platforms(): Platform[] {
+    return Object.keys(this.config.platforms).filter((platform) => this.backends[platform]);
+  }
+
   slotIds(platform: Platform): string[] {
-    return Array.from({ length: this.config[platform].size }, (_, i) => `${platform}-${i + 1}`);
+    const size = this.config.platforms[platform]?.size ?? 0;
+    return Array.from({ length: size }, (_, i) => `${platform}-${i + 1}`);
   }
 
   private platformOf(slot: string): Platform {
-    return slot.split("-")[0] as Platform;
+    return slot.slice(0, slot.lastIndexOf("-"));
+  }
+
+  private devicesOf(slot: string): Devices {
+    const backend = this.backends[this.platformOf(slot)];
+    if (!backend) throw new SimpoolError(`Unknown slot "${slot}".`);
+    return backend;
   }
 
   private port(slot: string): number {
-    const index = Number(slot.split("-")[1]);
-    return this.config[this.platformOf(slot)].portBase + index - 1;
+    const index = Number(slot.slice(slot.lastIndexOf("-") + 1));
+    return (this.config.platforms[this.platformOf(slot)]?.portBase ?? 0) + index - 1;
   }
 
   /** Why a lease may be taken over, or undefined while it is live. */
@@ -95,48 +108,55 @@ export class Pool {
     return this.slotIds(platform).find((slot) => state.leases[slot]?.owner === owner);
   }
 
-  private tryRename(udid: string, name: string): void {
+  private tryRename(slot: string, id: string, name: string): void {
     try {
-      this.sims.rename(udid, name);
+      this.devicesOf(slot).rename(id, name);
     } catch {
       // Cosmetic only: the window title lags behind, the lease is still correct.
     }
   }
 
   private ensureSlot(state: State, slot: string): Slot {
+    const backend = this.devicesOf(slot);
     const existing = state.slots[slot];
-    if (existing && this.sims.devices().some((d) => d.udid === existing.udid && d.isAvailable)) {
+    const device = existing && backend.devices().find((d) => d.id === existing.id && d.isAvailable);
+    if (existing && device) {
+      existing.aliases = device.aliases;
       return existing;
     }
-    const platform = this.platformOf(slot);
-    const udid = this.sims.create(idleName(slot), this.config[platform].deviceType);
-    const created: Slot = { platform, udid };
+    const id = backend.create(slot, idleName(slot));
+    const aliases = backend.devices().find((d) => d.id === id)?.aliases;
+    const created: Slot = { platform: this.platformOf(slot), id, ...(aliases?.length ? { aliases } : {}) };
     state.slots[slot] = created;
     return created;
   }
 
   private vacate(state: State, slot: string): void {
     delete state.leases[slot];
-    const udid = state.slots[slot]?.udid;
-    if (udid) this.tryRename(udid, idleName(slot));
+    const id = state.slots[slot]?.id;
+    if (id) this.tryRename(slot, id, idleName(slot));
   }
 
   private assign(state: State, slot: string, claimant: Claimant): Holding {
-    const { udid } = this.ensureSlot(state, slot);
+    const { id } = this.ensureSlot(state, slot);
     const now = this.now();
     const lease: Lease = { ...claimant, port: this.port(slot), leasedAt: now, renewedAt: now };
     state.leases[slot] = lease;
-    this.tryRename(udid, leasedName(slot, claimant.label));
-    return { slot, udid, port: lease.port, lease };
+    this.tryRename(slot, id, leasedName(slot, claimant.label));
+    return this.holding(state, slot);
   }
 
   private holding(state: State, slot: string): Holding {
     const lease = state.leases[slot] as Lease;
-    return { slot, udid: (state.slots[slot] as Slot).udid, port: lease.port, lease };
+    const { id, aliases = [] } = state.slots[slot] as Slot;
+    return { slot, id, aliases, port: lease.port, lease };
   }
 
   /** Returns this owner's device for the platform, assigning (and booting) one if needed. */
   lease(platform: Platform, claimant: Claimant, options: { boot?: boolean } = {}): Holding {
+    if (!this.platforms().includes(platform)) {
+      throw new SimpoolError(`Unknown platform "${platform}". Supported: ${this.platforms().join(", ")}.`);
+    }
     const holding = withState(this.config.home, (state) => {
       const mine = this.heldBy(state, claimant.owner, platform);
       if (mine) {
@@ -164,7 +184,7 @@ export class Pool {
         EXIT_REFUSED,
       );
     });
-    if (options.boot !== false) this.sims.boot(holding.udid);
+    if (options.boot !== false) this.devicesOf(holding.slot).boot(holding.id);
     return holding;
   }
 
@@ -185,7 +205,7 @@ export class Pool {
       this.vacate(state, slot);
       return { ...this.assign(state, slot, claimant), reclaimed: { lease: previous, reason } };
     });
-    if (options.boot !== false) this.sims.boot(holding.udid);
+    if (options.boot !== false) this.devicesOf(holding.slot).boot(holding.id);
     return holding;
   }
 
@@ -215,10 +235,10 @@ export class Pool {
         slots = Object.keys(state.leases).filter((slot) => state.leases[slot]?.owner === owner);
       }
       for (const slot of slots) this.vacate(state, slot);
-      return slots.map((slot) => ({ slot, udid: state.slots[slot]?.udid }));
+      return slots.map((slot) => ({ slot, id: state.slots[slot]?.id }));
     });
     if (options.shutdown) {
-      for (const { udid } of released) if (udid) this.sims.shutdown(udid);
+      for (const { slot, id } of released) if (id) this.devicesOf(slot).shutdown(id);
     }
     return released.map(({ slot }) => slot);
   }
@@ -240,49 +260,52 @@ export class Pool {
 
   status(): SlotStatus[] {
     const state = readState(this.config.home);
-    let devices: SimDevice[] = [];
-    try {
-      devices = this.sims.devices();
-    } catch {
-      // simctl unavailable: still show leases.
-    }
-    return this.slotIds("ios").map((slot) => {
-      const udid = state.slots[slot]?.udid;
-      const lease = state.leases[slot];
-      return {
-        slot,
-        udid,
-        deviceState: devices.find((d) => d.udid === udid)?.state,
-        lease,
-        stale: lease && this.staleReason(lease),
-      };
+    return this.platforms().flatMap((platform) => {
+      let devices: Device[] = [];
+      try {
+        devices = (this.backends[platform] as Devices).devices();
+      } catch {
+        // Platform tools unavailable: still show leases.
+      }
+      return this.slotIds(platform).map((slot) => {
+        const id = state.slots[slot]?.id;
+        const lease = state.leases[slot];
+        return {
+          slot,
+          id,
+          deviceState: devices.find((d) => d.id === id)?.state,
+          lease,
+          stale: lease && this.staleReason(lease),
+        };
+      });
     });
   }
 
   /**
-   * Whether `caller` may drive `target` (slot id, UDID or simulator name). Renews the
+   * Whether `caller` may drive `target` (slot id, device id, alias or name). Renews the
    * lease on success, so every simulator call doubles as a heartbeat. The session that
    * holds a lease keeps it even after `cd`-ing elsewhere.
    */
-  authorize(caller: Caller, target: string): Authorization {
+  authorize(caller: Caller, target: string, platform?: Platform): Authorization {
     return withState(this.config.home, (state) => {
       const slot = Object.keys(state.slots).find((id) => {
-        const udid = state.slots[id]?.udid;
+        const device = state.slots[id];
         const lease = state.leases[id];
         return (
           target === id ||
-          target === udid ||
+          target === device?.id ||
+          (device?.aliases ?? []).includes(target) ||
           target === idleName(id) ||
           (lease !== undefined && target === leasedName(id, lease.label))
         );
       });
-      const leaseCmd = "simpool lease ios";
+      const leaseCmd = `simpool lease ${slot ? this.platformOf(slot) : (platform ?? "<platform>")}`;
       if (!slot) {
-        return { ok: false, reason: `${target} is not a simpool device. Run \`${leaseCmd}\` and use the UDID it prints.` };
+        return { ok: false, reason: `${target} is not a simpool device. Run \`${leaseCmd}\` and use the id it prints.` };
       }
       const lease = state.leases[slot];
       if (!lease) {
-        return { ok: false, reason: `${slot} is not leased to you. Run \`${leaseCmd}\` and use the UDID it prints.` };
+        return { ok: false, reason: `${slot} is not leased to you. Run \`${leaseCmd}\` and use the id it prints.` };
       }
       const sameSession = lease.session !== undefined && lease.session === caller.session;
       if (!sameSession && !callerHolds(lease.owner, caller)) {
@@ -297,12 +320,16 @@ export class Pool {
     });
   }
 
-  /** UDIDs of every simulator on this machine, for spotting device references in shell commands. */
-  knownUdids(): Set<string> {
+  /** Ids and aliases of every device of `platform` on this machine, for spotting device references in shell commands. */
+  knownIds(platform: Platform): Set<string> {
+    const names = (d: { id: string; aliases?: string[] }) => [d.id, ...(d.aliases ?? [])];
+    const backend = this.backends[platform];
     try {
-      return new Set(this.sims.devices().map((d) => d.udid));
+      if (backend) return new Set(backend.devices().flatMap(names));
     } catch {
-      return new Set(Object.values(readState(this.config.home).slots).map((s) => s.udid));
+      // Fall back to the pool's own devices.
     }
+    const slots = Object.values(readState(this.config.home).slots).filter((s) => s.platform === platform);
+    return new Set(slots.flatMap(names));
   }
 }

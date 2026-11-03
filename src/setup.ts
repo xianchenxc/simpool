@@ -3,6 +3,8 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { PlatformDriver } from "./platforms/driver.ts";
+import { DRIVERS } from "./platforms/index.ts";
 
 export type Agent = "claude" | "codex";
 
@@ -13,8 +15,18 @@ interface AgentTarget {
   note?: string;
 }
 
+/** Hook matchers take no regex flags, so spell each letter in both cases. */
+function anyCase(word: string): string {
+  return word.replace(/[a-z]/gi, (c) => `[${c.toUpperCase()}${c.toLowerCase()}]`);
+}
+
 /** Same regex works for both agents: Claude and Codex name the shell tool `Bash`. */
-export const HOOK_MATCHER = "^(Bash|mcp__.*([Ss]imulator|[Xx]code|[Ii][Oo][Ss]).*)$";
+export function hookMatcher(drivers: PlatformDriver[]): string {
+  const keywords = drivers.flatMap((d) => d.mcp.keywords).map(anyCase);
+  return `^(Bash|mcp__.*(${keywords.join("|")}).*)$`;
+}
+
+export const HOOK_MATCHER = hookMatcher(DRIVERS);
 
 function targets(home: string): Record<Agent, AgentTarget> {
   return {

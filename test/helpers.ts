@@ -2,43 +2,60 @@ import { mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "../src/config.ts";
+import type { Device, Devices } from "../src/platforms/driver.ts";
 import { Pool } from "../src/pool.ts";
-import type { SimDevice, Simulators } from "../src/simctl.ts";
 
-export class FakeSims implements Simulators {
-  list: SimDevice[] = [];
+/** A platform's devices in memory. `makeId` picks the id format (UDID, emulator serial, …). */
+export class FakeDevices implements Devices {
+  list: Device[] = [];
   booted: string[] = [];
   private next = 1;
+  private makeId: (n: number, slot: string) => { id: string; aliases?: string[] };
 
-  devices(): SimDevice[] {
+  constructor(makeId?: (n: number, slot: string) => { id: string; aliases?: string[] }) {
+    this.makeId = makeId ?? ((n) => ({ id: `00000000-0000-0000-0000-${String(n).padStart(12, "0")}` }));
+  }
+
+  devices(): Device[] {
     return this.list;
   }
 
-  create(name: string): string {
-    const udid = `00000000-0000-0000-0000-${String(this.next++).padStart(12, "0")}`;
-    this.list.push({ udid, name, state: "Shutdown", isAvailable: true });
-    return udid;
+  create(slot: string, name: string): string {
+    const { id, aliases } = this.makeId(this.next++, slot);
+    this.list.push({ id, name, state: "Shutdown", isAvailable: true, ...(aliases ? { aliases } : {}) });
+    return id;
   }
 
-  rename(udid: string, name: string): void {
-    const device = this.list.find((d) => d.udid === udid);
+  rename(id: string, name: string): void {
+    const device = this.list.find((d) => d.id === id);
     if (device) device.name = name;
   }
 
-  boot(udid: string): void {
-    this.booted.push(udid);
+  boot(id: string): void {
+    this.booted.push(id);
   }
 
   shutdown(): void {}
 
-  nameOf(udid: string): string | undefined {
-    return this.list.find((d) => d.udid === udid)?.name;
+  nameOf(id: string): string | undefined {
+    return this.list.find((d) => d.id === id)?.name;
   }
+}
+
+/** Mimics the Android driver: slot android-N is `emulator-<5570 + 2(N-1)>`, alias its AVD name. */
+export function fakeEmulators(): FakeDevices {
+  return new FakeDevices((_n, slot) => {
+    const index = Number(slot.split("-")[1]);
+    return { id: `emulator-${5570 + 2 * (index - 1)}`, aliases: [`simpool_android_${index}`] };
+  });
 }
 
 export interface Fixture {
   pool: Pool;
-  sims: FakeSims;
+  /** iOS simulators. */
+  sims: FakeDevices;
+  /** Android emulators. */
+  emus: FakeDevices;
   clock: { now: number };
   /** Creates a fresh directory standing in for a worktree. */
   worktree(name: string): string;
@@ -50,14 +67,20 @@ export function fixture(overrides: Partial<Config> = {}): Fixture {
     home: join(root, "home"),
     ttlMinutes: 60,
     graceMinutes: 2,
-    ios: { size: 2, portBase: 8081 },
     ...overrides,
+    platforms: {
+      ios: { size: 2, portBase: 8081 },
+      android: { size: 2, portBase: 8091 },
+      ...overrides.platforms,
+    },
   };
-  const sims = new FakeSims();
+  const sims = new FakeDevices();
+  const emus = fakeEmulators();
   const clock = { now: 1_000_000_000_000 };
   return {
-    pool: new Pool(config, sims, () => clock.now),
+    pool: new Pool(config, { ios: sims, android: emus }, () => clock.now),
     sims,
+    emus,
     clock,
     worktree(name) {
       const dir = join(root, name);

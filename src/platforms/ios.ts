@@ -1,20 +1,5 @@
 import { execFileSync } from "node:child_process";
-
-export interface SimDevice {
-  udid: string;
-  name: string;
-  state: string;
-  isAvailable: boolean;
-}
-
-/** Everything the pool needs from simctl; tests swap in a fake. */
-export interface Simulators {
-  devices(): SimDevice[];
-  create(name: string, deviceType?: string): string;
-  rename(udid: string, name: string): void;
-  boot(udid: string): void;
-  shutdown(udid: string): void;
-}
+import { type Device, type Devices, type PlatformConfig, type PlatformDriver, leaseHint } from "./driver.ts";
 
 export interface Runtime {
   identifier: string;
@@ -61,7 +46,20 @@ export function chooseDevice(
   return type && runtime ? { deviceType: type, runtime: runtime.identifier } : undefined;
 }
 
-export class Simctl implements Simulators {
+interface SimctlDevice {
+  udid: string;
+  name: string;
+  state: string;
+  isAvailable: boolean;
+}
+
+export class Simctl implements Devices {
+  private deviceType: string | undefined;
+
+  constructor(config: PlatformConfig) {
+    this.deviceType = config.deviceType;
+  }
+
   private run(...args: string[]): string {
     return execFileSync("xcrun", ["simctl", ...args], {
       encoding: "utf8",
@@ -69,19 +67,21 @@ export class Simctl implements Simulators {
     });
   }
 
-  devices(): SimDevice[] {
+  devices(): Device[] {
     const parsed = JSON.parse(this.run("list", "devices", "-j")) as {
-      devices: Record<string, SimDevice[]>;
+      devices: Record<string, SimctlDevice[]>;
     };
-    return Object.values(parsed.devices).flat();
+    return Object.values(parsed.devices)
+      .flat()
+      .map((d) => ({ id: d.udid, name: d.name, state: d.state, isAvailable: d.isAvailable }));
   }
 
-  create(name: string, deviceType?: string): string {
+  create(_slot: string, name: string): string {
     const { runtimes } = JSON.parse(this.run("list", "runtimes", "-j")) as { runtimes: Runtime[] };
-    const choice = chooseDevice(runtimes, deviceType);
+    const choice = chooseDevice(runtimes, this.deviceType);
     if (!choice) {
       throw new Error(
-        `No installed iOS runtime supports ${deviceType ?? "an iPhone"}; install one in Xcode > Settings > Components.`,
+        `No installed iOS runtime supports ${this.deviceType ?? "an iPhone"}; install one in Xcode > Settings > Components.`,
       );
     }
     return this.run("create", name, choice.deviceType, choice.runtime).trim();
@@ -104,3 +104,38 @@ export class Simctl implements Simulators {
     }
   }
 }
+
+const SIMCTL_BOOTED = /\bsimctl\s+(?!list\b)[^|;&]*\bbooted\b/;
+const RUN_IOS = /\brun:ios\b|\brun-ios\b/;
+const UUID = /\b[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\b/gi;
+const HINT = leaseHint("ios", "UDID");
+
+export const ios: PlatformDriver = {
+  name: "ios",
+  defaults: { size: 3, portBase: 8081 },
+  open: (config) => new Simctl(config),
+  shell: {
+    trigger: /\bsimctl\b|\bxcodebuild\b|\brun:ios\b|\brun-ios\b/,
+    refs: (command) => (command.match(UUID) ?? []).map((u) => u.toUpperCase()),
+    forbidden: (command) =>
+      SIMCTL_BOOTED.test(command) ? `\`booted\` can resolve to another agent's simulator. ${HINT}` : undefined,
+    missingDevice(command) {
+      if (RUN_IOS.test(command)) {
+        return `Pass your simulator explicitly, e.g. \`expo run:ios --device <udid>\`. ${HINT}`;
+      }
+      if (/\bxcodebuild\b/.test(command) && /\btest\b/.test(command) && /platform=iOS Simulator/.test(command)) {
+        return `Target your simulator with \`-destination 'id=<udid>'\`. ${HINT}`;
+      }
+      return undefined;
+    },
+  },
+  mcp: {
+    // Claude's built-in simulator server, XcodeBuildMCP, ios-simulator-mcp, …
+    keywords: ["simulator", "xcode", "ios"],
+    fields: ["device", "udid", "simulatorId", "simulatorUuid", "simulatorUDID", "simulatorName", "deviceId"],
+    needsDevice: {
+      mcp__Claude_Code_iOS_Simulator__control: (input) => input.action !== "detach",
+    },
+  },
+  describe: (id) => ({ udid: id }),
+};

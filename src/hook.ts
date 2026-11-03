@@ -1,4 +1,5 @@
 import type { Caller } from "./owner.ts";
+import type { PlatformDriver } from "./platforms/driver.ts";
 import type { Pool } from "./pool.ts";
 
 /** The PreToolUse payload shared by Claude Code and Codex. */
@@ -9,45 +10,32 @@ export interface HookPayload {
   tool_input?: Record<string, unknown>;
 }
 
-const SHELL_TRIGGER = /\bsimctl\b|\bxcodebuild\b|\brun:ios\b|\brun-ios\b/;
-const SIMCTL_BOOTED = /\bsimctl\s+(?!list\b)[^|;&]*\bbooted\b/;
-const RUN_IOS = /\brun:ios\b|\brun-ios\b/;
-const UUID = /\b[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\b/gi;
-
-/** MCP servers that drive simulators: Claude's built-in one, XcodeBuildMCP, ios-simulator-mcp, … */
-const SIMULATOR_MCP = /^mcp__.*(simulator|xcode|ios)/i;
-const DEVICE_FIELDS = ["device", "udid", "simulatorId", "simulatorUuid", "simulatorUDID", "simulatorName", "deviceId"];
-
-/** Tools that silently fall back to "the booted simulator" when no device is given. */
-const NEEDS_DEVICE: Record<string, (input: Record<string, unknown>) => boolean> = {
-  mcp__Claude_Code_iOS_Simulator__control: (input) => input.action !== "detach",
-};
-
-const LEASE_HINT = "Run `simpool lease ios` and use the UDID it prints.";
-
-export function isSimulatorTool(toolName: string): boolean {
-  return toolName === "Bash" || SIMULATOR_MCP.test(toolName);
+/** MCP tools that drive devices: `mcp__<server>__<tool>` with a driver keyword in it. */
+export function mcpPattern(drivers: PlatformDriver[]): RegExp {
+  const keywords = drivers.flatMap((d) => d.mcp.keywords);
+  return new RegExp(`^mcp__.*(${keywords.join("|")})`, "i");
 }
 
-function checkShell(command: string, pool: Pool, caller: Caller): string | undefined {
-  if (!SHELL_TRIGGER.test(command)) return undefined;
-  if (SIMCTL_BOOTED.test(command)) {
-    return `\`booted\` can resolve to another agent's simulator. ${LEASE_HINT}`;
-  }
-  const known = pool.knownUdids();
-  const udids = [...new Set((command.match(UUID) ?? []).map((u) => u.toUpperCase()))].filter((u) =>
-    known.has(u),
-  );
-  for (const udid of udids) {
-    const result = pool.authorize(caller, udid);
-    if (!result.ok) return result.reason;
-  }
-  if (udids.length > 0) return undefined;
-  if (RUN_IOS.test(command)) {
-    return `Pass your simulator explicitly, e.g. \`expo run:ios --device <udid>\`. ${LEASE_HINT}`;
-  }
-  if (/\bxcodebuild\b/.test(command) && /\btest\b/.test(command) && /platform=iOS Simulator/.test(command)) {
-    return `Target your simulator with \`-destination 'id=<udid>'\`. ${LEASE_HINT}`;
+export function isSimulatorTool(toolName: string, drivers: PlatformDriver[]): boolean {
+  return toolName === "Bash" || mcpPattern(drivers).test(toolName);
+}
+
+function checkShell(command: string, pool: Pool, caller: Caller, drivers: PlatformDriver[]): string | undefined {
+  for (const driver of drivers) {
+    const rules = driver.shell;
+    if (!rules.trigger.test(command)) continue;
+    const forbidden = rules.forbidden?.(command);
+    if (forbidden) return forbidden;
+    const known = pool.knownIds(driver.name);
+    const refs = [...new Set(rules.refs(command))].filter((ref) => known.has(ref));
+    for (const ref of refs) {
+      const result = pool.authorize(caller, ref, driver.name);
+      if (!result.ok) return result.reason;
+    }
+    if (refs.length === 0) {
+      const missing = rules.missingDevice?.(command);
+      if (missing) return missing;
+    }
   }
   return undefined;
 }
@@ -57,24 +45,33 @@ function checkMcp(
   input: Record<string, unknown>,
   pool: Pool,
   caller: Caller,
+  drivers: PlatformDriver[],
 ): string | undefined {
-  const field = DEVICE_FIELDS.find((name) => typeof input[name] === "string" && input[name] !== "");
+  const fields = [...new Set(drivers.flatMap((d) => d.mcp.fields))];
+  const field = fields.find((name) => typeof input[name] === "string" && input[name] !== "");
   if (!field) {
-    return NEEDS_DEVICE[toolName]?.(input) ? `Pass \`device\` explicitly. ${LEASE_HINT}` : undefined;
+    const needsDevice = drivers.find((d) => d.mcp.needsDevice?.[toolName])?.mcp.needsDevice?.[toolName];
+    const hint = "Run `simpool lease <platform>` and use the id it prints.";
+    return needsDevice?.(input) ? `Pass \`device\` explicitly. ${hint}` : undefined;
   }
   const result = pool.authorize(caller, input[field] as string);
   return result.ok ? undefined : result.reason;
 }
 
 /** Returns a deny reason, or undefined to let the tool call through. */
-export function evaluate(payload: HookPayload, pool: Pool, caller: Caller): string | undefined {
+export function evaluate(
+  payload: HookPayload,
+  pool: Pool,
+  caller: Caller,
+  drivers: PlatformDriver[],
+): string | undefined {
   const toolName = payload.tool_name ?? "";
   const input = payload.tool_input ?? {};
   if (toolName === "Bash") {
-    return checkShell(String(input.command ?? ""), pool, caller);
+    return checkShell(String(input.command ?? ""), pool, caller, drivers);
   }
-  if (SIMULATOR_MCP.test(toolName)) {
-    return checkMcp(toolName, input, pool, caller);
+  if (mcpPattern(drivers).test(toolName)) {
+    return checkMcp(toolName, input, pool, caller, drivers);
   }
   return undefined;
 }

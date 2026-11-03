@@ -4,7 +4,10 @@ import type { Platform } from "./config.ts";
 
 export interface Slot {
   platform: Platform;
-  udid: string;
+  /** The device's id: a UDID, an emulator serial, … */
+  id: string;
+  /** Other names for the device, e.g. an AVD name. */
+  aliases?: string[];
 }
 
 export interface Lease {
@@ -20,7 +23,7 @@ export interface Lease {
 
 export interface State {
   version: 1;
-  /** Slot id ("ios-1") → the simulator backing it. Survives releases. */
+  /** Slot id ("ios-1") → the device backing it. Survives releases. */
   slots: Record<string, Slot>;
   /** Slot id → current holder. */
   leases: Record<string, Lease>;
@@ -66,11 +69,18 @@ function emptyState(): State {
 }
 
 export function readState(home: string): State {
+  let state: State;
   try {
-    return JSON.parse(readFileSync(join(home, "state.json"), "utf8")) as State;
+    state = JSON.parse(readFileSync(join(home, "state.json"), "utf8")) as State;
   } catch {
     return emptyState();
   }
+  // Slots written before platform drivers stored the iOS UDID as `udid`.
+  for (const slot of Object.values(state.slots) as (Slot & { udid?: string })[]) {
+    if (slot.id === undefined && slot.udid !== undefined) slot.id = slot.udid;
+    delete slot.udid;
+  }
+  return state;
 }
 
 /** Runs fn under the pool lock and persists the state only if fn returns normally. */

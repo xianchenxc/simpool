@@ -71,7 +71,7 @@ test("a pid lease is reclaimed as soon as its process exits", () => {
   pool.lease("ios", { owner: worktree("b"), label: "b" });
 
   const taken = pool.lease("ios", { owner: worktree("c"), label: "c" });
-  assert.equal(taken.udid, held.udid);
+  assert.equal(taken.id, held.id);
   assert.match(taken.reclaimed?.reason ?? "", /^process \d+ exited$/);
 });
 

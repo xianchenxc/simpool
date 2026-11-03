@@ -1,30 +1,23 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { PlatformConfig, PlatformDriver } from "./platforms/driver.ts";
 
-export type Platform = "ios";
-
-export interface PlatformConfig {
-  /** Number of devices in the pool. */
-  size: number;
-  /** Simulator device type name, e.g. "iPhone 17". Undefined picks the newest plain iPhone. */
-  deviceType?: string;
-  /** Slot N gets port portBase + N - 1 (Metro, dev servers, …). */
-  portBase: number;
-}
+export type Platform = string;
 
 export interface Config {
   home: string;
   ttlMinutes: number;
   /** A lease younger than this is never reclaimed for a missing owner directory. */
   graceMinutes: number;
-  ios: PlatformConfig;
+  /** Platform name → its settings, in driver order. */
+  platforms: Record<Platform, PlatformConfig>;
 }
 
 interface ConfigFile {
   ttlMinutes?: number;
   graceMinutes?: number;
-  ios?: Partial<PlatformConfig>;
+  [platform: string]: unknown;
 }
 
 function int(value: string | undefined): number | undefined {
@@ -33,7 +26,7 @@ function int(value: string | undefined): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+export function loadConfig(drivers: PlatformDriver[], env: NodeJS.ProcessEnv = process.env): Config {
   const home = env.SIMPOOL_HOME ?? join(homedir(), ".simpool");
   let file: ConfigFile = {};
   try {
@@ -41,14 +34,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   } catch {
     // No config file: defaults apply.
   }
+  const platforms: Record<Platform, PlatformConfig> = {};
+  for (const driver of drivers) {
+    const fromFile = (file[driver.name] ?? {}) as Partial<PlatformConfig>;
+    const prefix = `SIMPOOL_${driver.name.toUpperCase()}`;
+    platforms[driver.name] = {
+      ...driver.defaults,
+      ...fromFile,
+      size: int(env[`${prefix}_SIZE`]) ?? fromFile.size ?? driver.defaults.size,
+      deviceType: env[`${prefix}_DEVICE_TYPE`] ?? fromFile.deviceType ?? driver.defaults.deviceType,
+    };
+  }
   return {
     home,
     ttlMinutes: int(env.SIMPOOL_TTL_MINUTES) ?? file.ttlMinutes ?? 60,
     graceMinutes: file.graceMinutes ?? 2,
-    ios: {
-      size: int(env.SIMPOOL_IOS_SIZE) ?? file.ios?.size ?? 3,
-      deviceType: env.SIMPOOL_IOS_DEVICE_TYPE ?? file.ios?.deviceType,
-      portBase: file.ios?.portBase ?? 8081,
-    },
+    platforms,
   };
 }

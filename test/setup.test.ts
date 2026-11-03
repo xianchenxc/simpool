@@ -21,7 +21,7 @@ test("mergeHooks keeps other hooks and replaces an older simpool entry", () => {
 
 test("the matcher covers Bash and simulator MCP tools only", () => {
   const re = new RegExp(HOOK_MATCHER);
-  for (const name of ["Bash", "mcp__Claude_Code_iOS_Simulator__control", "mcp__XcodeBuildMCP__build_run_sim", "mcp__ios-simulator__ui_tap"]) {
+  for (const name of ["Bash", "mcp__Claude_Code_iOS_Simulator__control", "mcp__XcodeBuildMCP__build_run_sim", "mcp__ios-simulator__ui_tap", "mcp__mobile-mcp__mobile_tap", "mcp__android__adb_shell"]) {
     assert.ok(re.test(name), name);
   }
   for (const name of ["Read", "Edit", "mcp__github__create_pr", "BashOutput"]) {
