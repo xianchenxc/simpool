@@ -189,8 +189,10 @@ platform `SIMPOOL_<PLATFORM>_SIZE` / `SIMPOOL_<PLATFORM>_DEVICE_TYPE`
 Releases are automated with [Release Please](https://github.com/googleapis/release-please).
 Every push to `main` updates a Release PR that bumps the version and the
 CHANGELOG from conventional commits (`fix:` → patch, `feat:` → minor while
-below 1.0). Merging it tags the release and publishes to npm from GitHub
+below 1.0). Merging it tags the release and stages it on npm from GitHub
 Actions through npm Trusted Publishing, so no npm token is stored anywhere.
+The version goes live once a maintainer approves it with 2FA on npmjs.com
+(Staged Packages) or with `npm stage approve <id>`.
 
 ## License
 
