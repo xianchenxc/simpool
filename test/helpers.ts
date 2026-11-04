@@ -57,6 +57,8 @@ export interface Fixture {
   /** Android emulators. */
   emus: FakeDevices;
   clock: { now: number };
+  /** The pool's state directory. */
+  home: string;
   /** Creates a fresh directory standing in for a worktree. */
   worktree(name: string): string;
 }
@@ -82,6 +84,7 @@ export function fixture(overrides: Partial<Config> = {}): Fixture {
     sims,
     emus,
     clock,
+    home: config.home,
     worktree(name) {
       const dir = join(root, name);
       mkdirSync(dir, { recursive: true });
