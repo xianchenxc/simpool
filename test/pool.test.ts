@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 import { EXIT_REFUSED, SimpoolError } from "../src/pool.ts";
 import { MINUTE, fixture } from "./helpers.ts";
@@ -17,11 +18,11 @@ test("lease is sticky per worktree and gives each worktree its own device and po
   const again = pool.lease("ios", { owner: a, label: "feat-a" });
   const other = pool.lease("ios", { owner: b, label: "feat-b" });
 
-  assert.equal(again.udid, first.udid);
-  assert.notEqual(other.udid, first.udid);
+  assert.equal(again.id, first.id);
+  assert.notEqual(other.id, first.id);
   assert.deepEqual([first.port, other.port], [8081, 8082]);
-  assert.equal(sims.nameOf(first.udid), "🔒 feat-a · simpool ios-1");
-  assert.ok(sims.booted.includes(first.udid));
+  assert.equal(sims.nameOf(first.id), "🔒 feat-a · simpool ios-1");
+  assert.ok(sims.booted.includes(first.id));
 });
 
 test("a full pool of live leases refuses", () => {
@@ -42,9 +43,9 @@ test("a full pool reclaims the lease of a removed worktree after the grace perio
 
   clock.now += 3 * MINUTE;
   const taken = pool.lease("ios", { owner: worktree("c"), label: "c" });
-  assert.equal(taken.udid, held.udid);
+  assert.equal(taken.id, held.id);
   assert.equal(taken.reclaimed?.reason, "worktree removed");
-  assert.equal(sims.nameOf(taken.udid), "🔒 c · simpool ios-1");
+  assert.equal(sims.nameOf(taken.id), "🔒 c · simpool ios-1");
 });
 
 test("a full pool reclaims an idle lease past the TTL", () => {
@@ -60,7 +61,7 @@ test("a full pool reclaims an idle lease past the TTL", () => {
 });
 
 test("challenge refuses a live holder and takes over a stale one", () => {
-  const { pool, clock, worktree } = fixture({ ios: { size: 3, portBase: 8081 } });
+  const { pool, clock, worktree } = fixture({ platforms: { ios: { size: 3, portBase: 8081 } } });
   const a = worktree("a");
   const c = worktree("c");
   pool.lease("ios", { owner: a, label: "a" });
@@ -84,7 +85,7 @@ test("release frees only your own lease unless forced", () => {
 
   refused(() => pool.release(b, { slot: "ios-1" }));
   assert.deepEqual(pool.release(b, { slot: "ios-1", force: true }), ["ios-1"]);
-  assert.equal(sims.nameOf(held.udid), "simpool ios-1");
+  assert.equal(sims.nameOf(held.id), "simpool ios-1");
   assert.deepEqual(pool.release(a), []);
 });
 
@@ -97,7 +98,7 @@ test("a deleted simulator is recreated for its slot", () => {
 
   const second = pool.lease("ios", { owner: a, label: "a" });
   assert.equal(second.slot, "ios-1");
-  assert.notEqual(second.udid, first.udid);
+  assert.notEqual(second.id, first.id);
 });
 
 test("authorize accepts slot, UDID and device name, and renews the lease", () => {
@@ -106,9 +107,45 @@ test("authorize accepts slot, UDID and device name, and renews the lease", () =>
   const held = pool.lease("ios", { owner: a, label: "a" });
   clock.now += 50 * MINUTE;
 
-  for (const target of ["ios-1", held.udid, "🔒 a · simpool ios-1"]) {
+  for (const target of ["ios-1", held.id, "🔒 a · simpool ios-1"]) {
     assert.deepEqual(pool.authorize({ owner: a }, target), { ok: true, slot: "ios-1" });
   }
   clock.now += 50 * MINUTE;
   assert.equal(pool.status()[0]?.stale, undefined);
+});
+
+test("android leases get emulator serials, AVD aliases and their own ports", () => {
+  const { pool, emus, worktree } = fixture();
+  const a = worktree("a");
+  const ios = pool.lease("ios", { owner: a, label: "a" });
+  const android = pool.lease("android", { owner: a, label: "a" });
+
+  assert.deepEqual([android.slot, android.id, android.aliases, android.port], [
+    "android-1",
+    "emulator-5570",
+    ["simpool_android_1"],
+    8091,
+  ]);
+  assert.equal(ios.port, 8081);
+  assert.ok(emus.booted.includes("emulator-5570"));
+  assert.deepEqual(pool.authorize({ owner: a }, "simpool_android_1"), { ok: true, slot: "android-1" });
+  assert.deepEqual(
+    pool.status().map((s) => [s.slot, s.lease?.label]),
+    [["ios-1", "a"], ["ios-2", undefined], ["android-1", "a"], ["android-2", undefined]],
+  );
+  assert.throws(() => pool.lease("windows", { owner: a, label: "a" }), /Unknown platform "windows"/);
+});
+
+test("state written before drivers keeps its iOS slots", () => {
+  const { pool, sims, worktree } = fixture();
+  const a = worktree("a");
+  const first = pool.lease("ios", { owner: a, label: "a" });
+  const file = join((pool as unknown as { config: { home: string } }).config.home, "state.json");
+  const state = JSON.parse(readFileSync(file, "utf8"));
+  state.slots["ios-1"] = { platform: "ios", udid: first.id };
+  writeFileSync(file, JSON.stringify(state));
+
+  assert.equal(pool.lease("ios", { owner: a, label: "a" }).id, first.id);
+  assert.equal(sims.list.length, 1);
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).slots["ios-1"], { platform: "ios", id: first.id });
 });

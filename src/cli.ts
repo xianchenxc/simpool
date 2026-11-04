@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { type Platform, loadConfig } from "./config.ts";
+import { loadConfig } from "./config.ts";
 import { type HookPayload, denyOutput, evaluate, isSimulatorTool } from "./hook.ts";
 import { agentSession, ancestry, claimantOwner, defaultLabel, resolveOwner } from "./owner.ts";
+import { DRIVERS } from "./platforms/index.ts";
 import { type Holding, Pool, SimpoolError, describeLease } from "./pool.ts";
 import { type Agent, setup } from "./setup.ts";
-import { Simctl } from "./simctl.ts";
 
 const USAGE = `simpool — lease simulators to parallel AI agents
 
 Usage:
-  simpool lease ios [<identity>] [--label <name>] [--agent <name>] [--json] [--no-boot]
+  simpool lease <platform> [<identity>] [--label <name>] [--agent <name>] [--json] [--no-boot]
   simpool challenge <slot> [<identity>] [--json]
   simpool renew [<identity>]
   simpool release [<identity>] [--slot <slot> [--force]] [--shutdown]
@@ -26,10 +26,11 @@ Identity (who holds the lease; at most one):
   --session <id>      an agent session id
   --id <string>       any name; also read from SIMPOOL_ID, which the hook checks too
 
-lease and challenge print the UDID on stdout; everything else goes to stderr.
-Exit code 3 means refused: the pool is full or the holder is still live.`;
+Platforms: ${DRIVERS.map((d) => d.name).join(", ")}
 
-const PLATFORMS: Platform[] = ["ios"];
+lease and challenge print the device id on stdout (iOS: UDID, Android: emulator
+serial); everything else goes to stderr.
+Exit code 3 means refused: the pool is full or the holder is still live.`;
 
 function info(line: string): void {
   console.error(line);
@@ -41,9 +42,13 @@ function printHolding(holding: Holding, json: boolean): void {
   }
   info(`🔒 ${holding.slot} for "${holding.lease.label}" — port ${holding.port}`);
   if (json) {
-    console.log(JSON.stringify({ slot: holding.slot, udid: holding.udid, port: holding.port, label: holding.lease.label }));
+    const driver = DRIVERS.find((d) => holding.slot.startsWith(`${d.name}-`));
+    const extra = driver?.describe(holding.id, holding.aliases) ?? {};
+    console.log(
+      JSON.stringify({ slot: holding.slot, id: holding.id, ...extra, port: holding.port, label: holding.lease.label }),
+    );
   } else {
-    console.log(holding.udid);
+    console.log(holding.id);
   }
 }
 
@@ -54,7 +59,7 @@ function runHook(pool: Pool): void {
   } catch {
     return;
   }
-  if (!isSimulatorTool(payload.tool_name ?? "")) return;
+  if (!isSimulatorTool(payload.tool_name ?? "", DRIVERS)) return;
   try {
     let ancestors: Set<string> | undefined;
     const caller = {
@@ -64,7 +69,7 @@ function runHook(pool: Pool): void {
       // The hook runs as a child of the agent, so the agent's pid is among our ancestors.
       ancestors: () => (ancestors ??= ancestry()),
     };
-    const reason = evaluate(payload, pool, caller);
+    const reason = evaluate(payload, pool, caller, DRIVERS);
     if (reason) console.log(denyOutput(`simpool: ${reason}`));
   } catch (error) {
     // Fail open: a broken pool must not block every shell command.
@@ -102,7 +107,11 @@ function main(argv: string[]): void {
     return;
   }
 
-  const pool = new Pool(loadConfig(), new Simctl());
+  const config = loadConfig(DRIVERS);
+  const backends = Object.fromEntries(
+    DRIVERS.map((d) => [d.name, d.open(config.platforms[d.name] ?? d.defaults, config.home)]),
+  );
+  const pool = new Pool(config, backends);
   if (command === "hook") return runHook(pool);
 
   let owner: string;
@@ -126,8 +135,7 @@ function main(argv: string[]): void {
 
   switch (command) {
     case "lease": {
-      const platform = (arg ?? "ios") as Platform;
-      if (!PLATFORMS.includes(platform)) throw new SimpoolError(`Unknown platform "${arg}". Supported: ${PLATFORMS.join(", ")}.`);
+      const platform = arg ?? "ios";
       printHolding(pool.lease(platform, claimant, { boot: !values["no-boot"] }), values.json ?? false);
       return;
     }
@@ -160,7 +168,7 @@ function main(argv: string[]): void {
       }
       const now = Date.now();
       for (const row of rows) {
-        const device = row.udid ? `${row.udid} [${row.deviceState ?? "missing"}]` : "not created yet";
+        const device = row.id ? `${row.id} [${row.deviceState ?? "missing"}]` : "not created yet";
         if (!row.lease) {
           console.log(`${row.slot}  free  ${device}`);
           continue;

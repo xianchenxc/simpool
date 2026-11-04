@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type Runtime, chooseDevice, pickDeviceType } from "../src/simctl.ts";
+import { type Runtime, chooseDevice, pickDeviceType } from "../src/platforms/ios.ts";
 
 function runtime(version: string, types: string[], extra: Partial<Runtime> = {}): Runtime {
   return {
