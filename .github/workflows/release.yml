@@ -2,8 +2,8 @@ name: Release
 
 # Every push to main updates the Release PR (version bump + CHANGELOG from
 # conventional commits). Merging that PR tags the release, creates the GitHub
-# Release and stages the npm publish in the same run: tags pushed with
-# GITHUB_TOKEN would not trigger a separate workflow.
+# Release and publishes to npm in the same run: tags pushed with GITHUB_TOKEN
+# would not trigger a separate workflow.
 
 on:
   push:
@@ -42,11 +42,8 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      # Staged publishing needs npm 11.15.0 or later.
+      # Trusted Publishing needs npm 11.5.1 or later.
       - run: npm install -g npm@latest
       - run: npm ci
-      - run: npm run typecheck && npm test && npm run build
-      # The trusted publisher may only stage: the version goes live once a
-      # maintainer approves it with 2FA (npmjs.com > Staged Packages, or
-      # `npm stage approve <id>`), so a compromised workflow cannot release.
-      - run: npm stage publish
+      # prepublishOnly runs typecheck, tests and build first.
+      - run: npm publish
