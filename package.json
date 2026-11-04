@@ -1,6 +1,6 @@
 {
   "name": "simpool",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Lease simulators to parallel AI coding agents (Claude Code, Codex) so they never fight over the same device.",
   "keywords": [
     "ios",
