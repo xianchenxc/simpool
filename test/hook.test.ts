@@ -119,3 +119,23 @@ test("Android MCP servers are checked by their device field", () => {
   assert.equal(evaluate(call(mine.id), pool, { owner: a }, DRIVERS), undefined);
   assert.match(evaluate(call(theirs.id), pool, { owner: a }, DRIVERS) ?? "", /held by "b"/);
 });
+
+test("a pool device the state does not know yet is named as not leased, not as foreign", () => {
+  const fx = fixture();
+  const a = fx.worktree("a");
+  fx.emus.list.push({
+    id: "emulator-5572",
+    name: "simpool android-2",
+    state: "Shutdown",
+    isAvailable: true,
+    aliases: ["simpool_android_2"],
+  });
+  const check = (command: string) => evaluate(bash(command), fx.pool, { owner: a }, DRIVERS);
+  assert.match(check("adb -s emulator-5572 install app.apk") ?? "", /^android-2 is not leased to you\. Run `simpool lease android`/);
+  assert.match(check("npx expo run:android --device simpool_android_2") ?? "", /android-2 is not leased to you/);
+  // A leased device's name works too, and a foreign device is still foreign.
+  fx.sims.list.push({ id: "AAAAAAAA-0000-0000-0000-000000000001", name: "🔒 old · simpool ios-3", state: "Booted", isAvailable: true });
+  assert.match(check("xcrun simctl launch AAAAAAAA-0000-0000-0000-000000000001 com.app") ?? "", /^ios-3 is not leased to you/);
+  fx.emus.list.push({ id: "emulator-5554", name: "emulator-5554", state: "Booted", isAvailable: true });
+  assert.match(check("adb -s emulator-5554 install app.apk") ?? "", /not a simpool device/);
+});

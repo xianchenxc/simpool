@@ -50,6 +50,11 @@ export function leasedName(slot: string, label: string): string {
   return `🔒 ${label} · simpool ${slot}`;
 }
 
+/** The slot a pool device's name points at ("simpool ios-1", "🔒 feat · simpool android-2"), if any. */
+export function slotOfName(name: string): string | undefined {
+  return /(?:^|· )simpool ([a-z]+-\d+)$/.exec(name)?.[1];
+}
+
 export function describeLease(slot: string, lease: Lease, now: number): string {
   const idle = Math.floor((now - lease.renewedAt) / MINUTE);
   const who = [lease.agent, lease.session && `session ${lease.session}`].filter(Boolean).join(", ");
@@ -299,10 +304,14 @@ export class Pool {
           (lease !== undefined && target === leasedName(id, lease.label))
         );
       });
-      const leaseCmd = `simpool lease ${slot ? this.platformOf(slot) : (platform ?? "<platform>")}`;
       if (!slot) {
-        return { ok: false, reason: `${target} is not a simpool device. Run \`${leaseCmd}\` and use the id it prints.` };
+        // A pool device the state does not know yet (never leased, or the state was reset).
+        const pooled = this.unrecordedSlot(target, platform);
+        const leaseCmd = `simpool lease ${pooled ? this.platformOf(pooled) : (platform ?? "<platform>")}`;
+        const what = pooled ? `${pooled} is not leased to you` : `${target} is not a simpool device`;
+        return { ok: false, reason: `${what}. Run \`${leaseCmd}\` and use the id it prints.` };
       }
+      const leaseCmd = `simpool lease ${this.platformOf(slot)}`;
       const lease = state.leases[slot];
       if (!lease) {
         return { ok: false, reason: `${slot} is not leased to you. Run \`${leaseCmd}\` and use the id it prints.` };
@@ -318,6 +327,22 @@ export class Pool {
       lease.session = caller.session ?? lease.session;
       return { ok: true, slot };
     });
+  }
+
+  /** The pool slot a device outside the state is named after, e.g. an AVD left from an earlier pool. */
+  private unrecordedSlot(target: string, platform?: Platform): string | undefined {
+    for (const name of platform ? [platform] : this.platforms()) {
+      let devices: Device[] = [];
+      try {
+        devices = this.backends[name]?.devices() ?? [];
+      } catch {
+        continue;
+      }
+      const device = devices.find((d) => d.id === target || (d.aliases ?? []).includes(target));
+      const slot = device && slotOfName(device.name);
+      if (slot && this.platformOf(slot) === name) return slot;
+    }
+    return undefined;
   }
 
   /** Ids and aliases of every device of `platform` on this machine, for spotting device references in shell commands. */
