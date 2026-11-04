@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { loadConfig } from "./config.ts";
+import { type EventKind, formatEvent, logEvent, parseSince, readEvents } from "./events.ts";
 import { type HookPayload, denyOutput, evaluate, isSimulatorTool } from "./hook.ts";
 import { agentSession, ancestry, claimantOwner, defaultLabel, resolveOwner } from "./owner.ts";
 import { DRIVERS } from "./platforms/index.ts";
@@ -17,6 +18,7 @@ Usage:
   simpool release [<identity>] [--slot <slot> [--force]] [--shutdown]
   simpool status [--json]
   simpool gc
+  simpool log [--since <30m|6h|2d>] [--event <kind,…>] [-n <count>] [--json]
   simpool setup [--claude] [--codex] [--no-hook] [--remove] [--dry-run]
   simpool hook                      (PreToolUse hook; reads the payload on stdin)
 
@@ -52,7 +54,7 @@ function printHolding(holding: Holding, json: boolean): void {
   }
 }
 
-function runHook(pool: Pool): void {
+function runHook(pool: Pool, home: string): void {
   let payload: HookPayload;
   try {
     payload = JSON.parse(readFileSync(0, "utf8")) as HookPayload;
@@ -70,7 +72,19 @@ function runHook(pool: Pool): void {
       ancestors: () => (ancestors ??= ancestry()),
     };
     const reason = evaluate(payload, pool, caller, DRIVERS);
-    if (reason) console.log(denyOutput(`simpool: ${reason}`));
+    if (reason) {
+      const input = payload.tool_input ?? {};
+      logEvent(home, {
+        t: Date.now(),
+        event: "deny",
+        owner: caller.owner,
+        session: caller.session,
+        tool: payload.tool_name,
+        command: payload.tool_name === "Bash" ? String(input.command ?? "") : JSON.stringify(input),
+        reason,
+      });
+      console.log(denyOutput(`simpool: ${reason}`));
+    }
   } catch (error) {
     // Fail open: a broken pool must not block every shell command.
     info(`simpool hook error: ${(error as Error).message}`);
@@ -89,6 +103,9 @@ function main(argv: string[]): void {
       session: { type: "string" },
       id: { type: "string" },
       slot: { type: "string" },
+      since: { type: "string" },
+      event: { type: "string" },
+      limit: { type: "string", short: "n" },
       json: { type: "boolean" },
       "no-boot": { type: "boolean" },
       force: { type: "boolean" },
@@ -112,7 +129,19 @@ function main(argv: string[]): void {
     DRIVERS.map((d) => [d.name, d.open(config.platforms[d.name] ?? d.defaults, config.home)]),
   );
   const pool = new Pool(config, backends);
-  if (command === "hook") return runHook(pool);
+  if (command === "hook") return runHook(pool, config.home);
+  if (command === "log") {
+    const since = values.since ? Date.now() - parseSince(values.since) : 0;
+    const kinds = values.event ? new Set(values.event.split(",").map((k) => k.trim() as EventKind)) : undefined;
+    const limit = Number(values.limit ?? 50);
+    if (!Number.isInteger(limit) || limit < 1) throw new SimpoolError(`-n takes a positive count, not "${values.limit}".`);
+    const events = readEvents(config.home)
+      .filter((e) => e.t >= since && (!kinds || kinds.has(e.event)))
+      .slice(-limit);
+    for (const event of events) console.log(values.json ? JSON.stringify(event) : formatEvent(event));
+    if (events.length === 0 && !values.json) info("No events.");
+    return;
+  }
 
   let owner: string;
   try {

@@ -1,4 +1,5 @@
 import type { Config, Platform } from "./config.ts";
+import { type PoolEvent, logEvent } from "./events.ts";
 import { type Caller, callerHolds, describeOwner, ownerGone, ownerKind } from "./owner.ts";
 import type { Device, Devices } from "./platforms/driver.ts";
 import { type Lease, type Slot, type State, readState, withState } from "./state.ts";
@@ -104,6 +105,27 @@ export class Pool {
     return undefined;
   }
 
+  private log(event: Omit<PoolEvent, "t">): void {
+    logEvent(this.config.home, { t: this.now(), ...event });
+  }
+
+  private holder(lease: Lease): Pick<PoolEvent, "owner" | "label" | "session" | "agent"> {
+    return { owner: lease.owner, label: lease.label, session: lease.session, agent: lease.agent };
+  }
+
+  /** Boots outside the lock; a slow (real) boot or a failure goes to the event log. */
+  private bootAndLog(holding: Holding): void {
+    const started = Date.now();
+    try {
+      this.devicesOf(holding.slot).boot(holding.id);
+    } catch (error) {
+      this.log({ event: "boot", slot: holding.slot, device: holding.id, ms: Date.now() - started, error: (error as Error).message });
+      throw error;
+    }
+    const ms = Date.now() - started;
+    if (ms >= 1000) this.log({ event: "boot", slot: holding.slot, device: holding.id, ms });
+  }
+
   private heldBy(state: State, owner: string, platform: Platform): string | undefined {
     return this.slotIds(platform).find((slot) => state.leases[slot]?.owner === owner);
   }
@@ -125,6 +147,7 @@ export class Pool {
       return existing;
     }
     const id = backend.create(slot, idleName(slot));
+    this.log({ event: "create", slot, device: id });
     const aliases = backend.devices().find((d) => d.id === id)?.aliases;
     const created: Slot = { platform: this.platformOf(slot), id, ...(aliases?.length ? { aliases } : {}) };
     state.slots[slot] = created;
@@ -143,6 +166,7 @@ export class Pool {
     const lease: Lease = { ...claimant, port: this.port(slot), leasedAt: now, renewedAt: now };
     state.leases[slot] = lease;
     this.tryRename(slot, id, leasedName(slot, claimant.label));
+    this.log({ event: "lease", slot, device: id, ...this.holder(lease) });
     return this.holding(state, slot);
   }
 
@@ -163,6 +187,7 @@ export class Pool {
         const lease = state.leases[mine] as Lease;
         lease.renewedAt = this.now();
         lease.session = claimant.session ?? lease.session;
+        this.log({ event: "renew", slot: mine, ...this.holder(lease) });
         return this.holding(state, mine);
       }
       const slots = this.slotIds(platform);
@@ -174,9 +199,11 @@ export class Pool {
         const reason = this.staleReason(previous);
         if (reason) {
           this.vacate(state, slot);
+          this.log({ event: "reclaim", slot, from: previous.label, reason, ...claimant });
           return { ...this.assign(state, slot, claimant), reclaimed: { lease: previous, reason } };
         }
       }
+      this.log({ event: "refuse", platform, reason: "pool full", ...claimant });
       const now = this.now();
       const holders = slots.map((slot) => `  ${describeLease(slot, state.leases[slot] as Lease, now)}`);
       throw new SimpoolError(
@@ -184,7 +211,7 @@ export class Pool {
         EXIT_REFUSED,
       );
     });
-    if (options.boot !== false) this.devicesOf(holding.slot).boot(holding.id);
+    if (options.boot !== false) this.bootAndLog(holding);
     return holding;
   }
 
@@ -198,14 +225,16 @@ export class Pool {
       if (previous.owner === claimant.owner) return this.holding(state, slot);
       const reason = this.staleReason(previous);
       if (!reason) {
+        this.log({ event: "refuse", slot, from: previous.label, reason: "holder live", ...claimant });
         throw new SimpoolError(`Refused: ${describeLease(slot, previous, this.now())} is live.`, EXIT_REFUSED);
       }
       const mine = this.heldBy(state, claimant.owner, this.platformOf(slot));
       if (mine) this.vacate(state, mine);
       this.vacate(state, slot);
+      this.log({ event: "challenge", slot, from: previous.label, reason, ...claimant });
       return { ...this.assign(state, slot, claimant), reclaimed: { lease: previous, reason } };
     });
-    if (options.boot !== false) this.devicesOf(holding.slot).boot(holding.id);
+    if (options.boot !== false) this.bootAndLog(holding);
     return holding;
   }
 
@@ -234,7 +263,11 @@ export class Pool {
       } else {
         slots = Object.keys(state.leases).filter((slot) => state.leases[slot]?.owner === owner);
       }
-      for (const slot of slots) this.vacate(state, slot);
+      for (const slot of slots) {
+        const lease = state.leases[slot] as Lease;
+        this.log({ event: "release", slot, ...this.holder(lease), ...(lease.owner !== owner ? { reason: "forced" } : {}) });
+        this.vacate(state, slot);
+      }
       return slots.map((slot) => ({ slot, id: state.slots[slot]?.id }));
     });
     if (options.shutdown) {
@@ -251,6 +284,7 @@ export class Pool {
         const reason = this.staleReason(lease);
         if (reason) {
           this.vacate(state, slot);
+          this.log({ event: "gc", slot, from: lease.label, reason });
           reaped.push({ slot, lease, reason });
         }
       }

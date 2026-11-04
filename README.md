@@ -82,6 +82,8 @@ simpool status                                  # who holds what
 simpool challenge ios-1                         # take over a stale lease
 simpool release [--shutdown]                    # done with the device
 simpool gc                                      # free every stale lease now
+simpool log --since 6h                          # what happened: leases, reclaims, denials, boots
+simpool log --event deny,refuse -n 20 --json    # filter by kind, newest last
 ```
 
 `simpool lease android --json` adds `serial` and `avd` (the AVD name Expo's
@@ -166,6 +168,11 @@ platform `SIMPOOL_<PLATFORM>_SIZE` / `SIMPOOL_<PLATFORM>_DEVICE_TYPE`
 - State lives in `~/.simpool/state.json`: slots (`ios-1` → UDID,
   `android-1` → serial) and leases (slot → worktree, label, session, port,
   timestamps).
+- Events go to `~/.simpool/events.jsonl`, one JSON object per line: `lease`,
+  `renew`, `reclaim`, `challenge`, `refuse`, `release`, `gc`, `create`, `boot`
+  (slow boots and failures, with their duration) and `deny` (every call the
+  hook refused, with the command and the reason). Past 5 MB the file rolls
+  over to `events.1.jsonl`. `simpool log` reads both.
 - Every change runs under an atomic `mkdir` lock with stale-lock recovery, so
   simultaneous claims from parallel agents always get distinct devices.
 - The owner of a lease is, by default, the git toplevel of the caller's
