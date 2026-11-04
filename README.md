@@ -184,6 +184,14 @@ platform `SIMPOOL_<PLATFORM>_SIZE` / `SIMPOOL_<PLATFORM>_DEVICE_TYPE`
 - Claude Code / Codex plugin packaging
 - Homebrew formula
 
+## Releasing
+
+Releases are automated with [Release Please](https://github.com/googleapis/release-please).
+Every push to `main` updates a Release PR that bumps the version and the
+CHANGELOG from conventional commits (`fix:` → patch, `feat:` → minor while
+below 1.0). Merging it tags the release and publishes to npm from GitHub
+Actions through npm Trusted Publishing, so no npm token is stored anywhere.
+
 ## License
 
 MIT
