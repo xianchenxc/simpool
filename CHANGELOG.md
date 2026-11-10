@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/xianchenxc/simpool/compare/v0.3.0...v0.4.0) (2026-11-10)
+
+
+### Features
+
+* shut pool devices down when released, stale or idle ([#7](https://github.com/xianchenxc/simpool/issues/7)) ([afc987f](https://github.com/xianchenxc/simpool/commit/afc987fbf1b61ffaf53c9860e5035b43cb6e7cf7))
+
 ## [0.3.0](https://github.com/xianchenxc/simpool/compare/v0.2.0...v0.3.0) (2026-11-04)
 
 
