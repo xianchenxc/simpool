@@ -9,6 +9,7 @@ import { Pool } from "../src/pool.ts";
 export class FakeDevices implements Devices {
   list: Device[] = [];
   booted: string[] = [];
+  shutdowns: string[] = [];
   private next = 1;
   private makeId: (n: number, slot: string) => { id: string; aliases?: string[] };
 
@@ -33,9 +34,15 @@ export class FakeDevices implements Devices {
 
   boot(id: string): void {
     this.booted.push(id);
+    const device = this.list.find((d) => d.id === id);
+    if (device) device.state = "Booted";
   }
 
-  shutdown(): void {}
+  shutdown(id: string): void {
+    this.shutdowns.push(id);
+    const device = this.list.find((d) => d.id === id);
+    if (device) device.state = "Shutdown";
+  }
 
   nameOf(id: string): string | undefined {
     return this.list.find((d) => d.id === id)?.name;
@@ -69,6 +76,7 @@ export function fixture(overrides: Partial<Config> = {}): Fixture {
     home: join(root, "home"),
     ttlMinutes: 60,
     graceMinutes: 2,
+    idleShutdownMinutes: 15,
     ...overrides,
     platforms: {
       ios: { size: 2, portBase: 8081 },

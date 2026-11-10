@@ -8,6 +8,8 @@ export interface Slot {
   id: string;
   /** Other names for the device, e.g. an AVD name. */
   aliases?: string[];
+  /** When the slot's last lease ended; undefined while leased. */
+  freedAt?: number;
 }
 
 export interface Lease {
@@ -27,6 +29,8 @@ export interface State {
   slots: Record<string, Slot>;
   /** Slot id → current holder. */
   leases: Record<string, Lease>;
+  /** When `gc` last ran, so `lease` and `status` run it at most every few minutes. */
+  lastGcAt?: number;
 }
 
 const LOCK_STALE_MS = 30_000;

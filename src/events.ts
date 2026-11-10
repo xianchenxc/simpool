@@ -11,6 +11,7 @@ export type EventKind =
   | "gc"
   | "create" // a pool device created
   | "boot" // a device booted (slow boots only), or failed to
+  | "shutdown" // a pool device shut down: released, stale or idle
   | "deny"; // the hook denied a tool call
 
 export interface PoolEvent {

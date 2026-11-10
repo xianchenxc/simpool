@@ -72,10 +72,15 @@ another agent may be using.
 
 ## 4. Release when done
 
+When your simulator or emulator work is finished, and always before you
+report the task as done, release your devices:
+
 ```bash
-simpool release              # free this worktree's devices
-simpool release --shutdown   # …and shut them down
+simpool release                # free this worktree's devices and shut them down
+simpool release --keep-booted  # free them but leave them running (the user asked to keep it open)
 ```
 
-Forgetting is not fatal: leases of deleted worktrees and idle leases are
-reclaimed by the next agent that needs a device.
+A running simulator or emulator costs the user several GB of memory, so do
+not skip this. simpool also frees leases idle past the TTL and shuts down
+devices nobody holds, but that only happens the next time any agent runs
+`simpool lease` or `simpool status`.
