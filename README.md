@@ -24,8 +24,11 @@ $ simpool lease ios
 - 🏷️ **Visible.** Leased devices are renamed `🔒 <branch> · simpool ios-2`,
   so every simulator window says which task it belongs to.
 - ♻️ **Self-healing.** A lease goes stale when its worktree is deleted or it
-  sits idle past the TTL. The next agent that needs a device reclaims it; live
-  holders are never displaced.
+  sits idle past the TTL. `lease` and `status` free stale leases on the way
+  (at most every 5 minutes) and shut down devices nobody holds; live holders
+  are never displaced.
+- 💤 **Frugal.** `release` shuts the device down, and a device left free for
+  15 minutes is shut down too, so idle simulators do not eat your RAM.
 - 🔌 **A port per slot.** `ios-N` gets port `8080 + N`, `android-N` gets
   `8090 + N`, for Metro or any dev server, so parallel bundlers never collide.
 - 🧮 **Bounded.** A fixed pool (3 simulators, 2 emulators by default) instead
@@ -80,8 +83,8 @@ npx expo run:android --device simpool_android_1 --port 8091
 
 simpool status                                  # who holds what
 simpool challenge ios-1                         # take over a stale lease
-simpool release [--shutdown]                    # done with the device
-simpool gc                                      # free every stale lease now
+simpool release [--keep-booted]                 # done: free the device and shut it down
+simpool gc                                      # free stale leases, shut down idle devices now
 simpool log --since 6h                          # what happened: leases, reclaims, denials, boots
 simpool log --event deny,refuse -n 20 --json    # filter by kind, newest last
 ```
@@ -144,12 +147,14 @@ shell.
 ```json
 {
   "ttlMinutes": 60,
+  "idleShutdownMinutes": 15,
   "ios": { "size": 3, "deviceType": "iPhone 17", "portBase": 8081 },
   "android": { "size": 2, "deviceType": "Pixel_10", "portBase": 8091, "consolePortBase": 5570 }
 }
 ```
 
-Environment overrides: `SIMPOOL_HOME`, `SIMPOOL_TTL_MINUTES`, and per
+Environment overrides: `SIMPOOL_HOME`, `SIMPOOL_TTL_MINUTES`,
+`SIMPOOL_IDLE_SHUTDOWN_MINUTES`, and per
 platform `SIMPOOL_<PLATFORM>_SIZE` / `SIMPOOL_<PLATFORM>_DEVICE_TYPE`
 (`SIMPOOL_IOS_SIZE`, `SIMPOOL_ANDROID_DEVICE_TYPE`, …).
 
@@ -170,7 +175,8 @@ platform `SIMPOOL_<PLATFORM>_SIZE` / `SIMPOOL_<PLATFORM>_DEVICE_TYPE`
   timestamps).
 - Events go to `~/.simpool/events.jsonl`, one JSON object per line: `lease`,
   `renew`, `reclaim`, `challenge`, `refuse`, `release`, `gc`, `create`, `boot`
-  (slow boots and failures, with their duration) and `deny` (every call the
+  (slow boots and failures, with their duration), `shutdown` (released, stale
+  or idle) and `deny` (every call the
   hook refused, with the command and the reason). Past 5 MB the file rolls
   over to `events.1.jsonl`. `simpool log` reads both.
 - Every change runs under an atomic `mkdir` lock with stale-lock recovery, so

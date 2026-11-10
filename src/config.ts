@@ -10,6 +10,8 @@ export interface Config {
   ttlMinutes: number;
   /** A lease younger than this is never reclaimed for a missing owner directory. */
   graceMinutes: number;
+  /** A pool device nobody holds is shut down once it has been free this long. */
+  idleShutdownMinutes: number;
   /** Platform name → its settings, in driver order. */
   platforms: Record<Platform, PlatformConfig>;
 }
@@ -17,6 +19,7 @@ export interface Config {
 interface ConfigFile {
   ttlMinutes?: number;
   graceMinutes?: number;
+  idleShutdownMinutes?: number;
   [platform: string]: unknown;
 }
 
@@ -49,6 +52,7 @@ export function loadConfig(drivers: PlatformDriver[], env: NodeJS.ProcessEnv = p
     home,
     ttlMinutes: int(env.SIMPOOL_TTL_MINUTES) ?? file.ttlMinutes ?? 60,
     graceMinutes: file.graceMinutes ?? 2,
+    idleShutdownMinutes: int(env.SIMPOOL_IDLE_SHUTDOWN_MINUTES) ?? file.idleShutdownMinutes ?? 15,
     platforms,
   };
 }

@@ -42,7 +42,7 @@ test("formatEvent shows who and why on one line", () => {
   assert.equal(line, "11-04 21:03:07  deny      -          feat-x  Target your emulator · $ adb install app.apk");
 });
 
-test("the pool logs leases, renewals, reclaims, refusals, releases and device creation", () => {
+test("the pool logs leases, renewals, refusals, gc, shutdowns, releases and device creation", () => {
   const { pool, clock, home, worktree } = fixture({ platforms: { ios: { size: 1, portBase: 8081 } } });
   const a = worktree("a");
   pool.lease("ios", { owner: a, label: "a" });
@@ -62,8 +62,10 @@ test("the pool logs leases, renewals, reclaims, refusals, releases and device cr
     ["lease", "ios-1", "a", undefined, undefined],
     ["renew", "ios-1", "a", undefined, undefined],
     ["refuse", "ios", "b", undefined, "pool full"],
-    ["reclaim", "ios-1", "c", "a", "idle 61 min"],
+    ["gc", "ios-1", undefined, "a", "idle 61 min"],
+    ["shutdown", "ios-1", undefined, undefined, "stale"],
     ["lease", "ios-1", "c", undefined, undefined],
     ["release", "ios-1", "c", undefined, undefined],
+    ["shutdown", "ios-1", undefined, undefined, "released"],
   ]);
 });

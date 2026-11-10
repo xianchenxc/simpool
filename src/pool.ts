@@ -42,6 +42,7 @@ export interface SlotStatus {
 export type Authorization = { ok: true; slot: string } | { ok: false; reason: string };
 
 const MINUTE = 60_000;
+const GC_INTERVAL = 5 * MINUTE;
 
 export function idleName(slot: string): string {
   return `simpool ${slot}`;
@@ -161,12 +162,16 @@ export class Pool {
 
   private vacate(state: State, slot: string): void {
     delete state.leases[slot];
-    const id = state.slots[slot]?.id;
-    if (id) this.tryRename(slot, id, idleName(slot));
+    const device = state.slots[slot];
+    if (!device) return;
+    device.freedAt = this.now();
+    this.tryRename(slot, device.id, idleName(slot));
   }
 
   private assign(state: State, slot: string, claimant: Claimant): Holding {
-    const { id } = this.ensureSlot(state, slot);
+    const device = this.ensureSlot(state, slot);
+    delete device.freedAt;
+    const { id } = device;
     const now = this.now();
     const lease: Lease = { ...claimant, port: this.port(slot), leasedAt: now, renewedAt: now };
     state.leases[slot] = lease;
@@ -186,6 +191,8 @@ export class Pool {
     if (!this.platforms().includes(platform)) {
       throw new SimpoolError(`Unknown platform "${platform}". Supported: ${this.platforms().join(", ")}.`);
     }
+    // The claimant's own stale lease stays: re-leasing must return the same warm device.
+    this.maybeGc(claimant.owner);
     const holding = withState(this.config.home, (state) => {
       const mine = this.heldBy(state, claimant.owner, platform);
       if (mine) {
@@ -251,8 +258,8 @@ export class Pool {
     });
   }
 
-  /** Releases the owner's leases, or one slot. Another owner's slot needs force. */
-  release(owner: string, options: { slot?: string; force?: boolean; shutdown?: boolean } = {}): string[] {
+  /** Releases the owner's leases, or one slot, and shuts their devices down. Another owner's slot needs force. */
+  release(owner: string, options: { slot?: string; force?: boolean; keepBooted?: boolean } = {}): string[] {
     const released = withState(this.config.home, (state) => {
       let slots: string[];
       if (options.slot) {
@@ -275,17 +282,30 @@ export class Pool {
       }
       return slots.map((slot) => ({ slot, id: state.slots[slot]?.id }));
     });
-    if (options.shutdown) {
-      for (const { slot, id } of released) if (id) this.devicesOf(slot).shutdown(id);
+    if (!options.keepBooted) {
+      for (const { slot, id } of released) if (id) this.shutdown(slot, id, "released");
     }
     return released.map(({ slot }) => slot);
   }
 
-  /** Frees every stale lease. */
-  gc(): { slot: string; lease: Lease; reason: string }[] {
-    return withState(this.config.home, (state) => {
+  private shutdown(slot: string, id: string, reason: string): void {
+    try {
+      this.devicesOf(slot).shutdown(id);
+      this.log({ event: "shutdown", slot, device: id, reason });
+    } catch (error) {
+      this.log({ event: "shutdown", slot, device: id, reason, error: (error as Error).message });
+    }
+  }
+
+  /**
+   * Frees every stale lease (except `keepOwner`'s) and shuts down the devices nobody holds:
+   * those just freed, and those free for longer than idleShutdownMinutes.
+   */
+  gc(options: { keepOwner?: string } = {}): { slot: string; lease: Lease; reason: string }[] {
+    const { reaped, idle } = withState(this.config.home, (state) => {
       const reaped: { slot: string; lease: Lease; reason: string }[] = [];
       for (const [slot, lease] of Object.entries(state.leases)) {
+        if (lease.owner === options.keepOwner) continue;
         const reason = this.staleReason(lease);
         if (reason) {
           this.vacate(state, slot);
@@ -293,11 +313,49 @@ export class Pool {
           reaped.push({ slot, lease, reason });
         }
       }
-      return reaped;
+      const now = this.now();
+      state.lastGcAt = now;
+      const idle = Object.entries(state.slots)
+        .filter(([slot, device]) => {
+          if (state.leases[slot] || !this.backends[device.platform]) return false;
+          const justFreed = reaped.some((r) => r.slot === slot);
+          // Slots freed before freedAt existed count as long idle.
+          const idleFor = now - (device.freedAt ?? 0);
+          return justFreed || idleFor > this.config.idleShutdownMinutes * MINUTE;
+        })
+        .map(([slot, device]) => ({ slot, id: device.id, reason: reaped.some((r) => r.slot === slot) ? "stale" : "idle" }));
+      return { reaped, idle };
     });
+    // Outside the lock: shutting down can take seconds. Only booted devices are touched.
+    for (const platform of new Set(idle.map((d) => this.platformOf(d.slot)))) {
+      let booted: Set<string>;
+      try {
+        const devices = (this.backends[platform] as Devices).devices();
+        booted = new Set(devices.filter((d) => d.state === "Booted" || d.state === "Booting").map((d) => d.id));
+      } catch {
+        continue;
+      }
+      for (const device of idle) {
+        if (this.platformOf(device.slot) === platform && booted.has(device.id)) {
+          this.shutdown(device.slot, device.id, device.reason);
+        }
+      }
+    }
+    return reaped;
+  }
+
+  /** Runs gc when it has not run for a few minutes; `lease` and `status` call it so nobody has to. */
+  private maybeGc(keepOwner?: string): void {
+    if (this.now() - (readState(this.config.home).lastGcAt ?? 0) < GC_INTERVAL) return;
+    try {
+      this.gc({ keepOwner });
+    } catch {
+      // Housekeeping must never fail a lease.
+    }
   }
 
   status(): SlotStatus[] {
+    this.maybeGc();
     const state = readState(this.config.home);
     return this.platforms().flatMap((platform) => {
       let devices: Device[] = [];
