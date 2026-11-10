@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/xianchenxc/simpool/compare/v0.4.0...v0.5.0) (2026-11-10)
+
+
+### Features
+
+* keep released devices warm and give them back to the same worktree ([#9](https://github.com/xianchenxc/simpool/issues/9)) ([029ba44](https://github.com/xianchenxc/simpool/commit/029ba44c81eae4bdcc2e08a44141deb06d451bd5))
+
 ## [0.4.0](https://github.com/xianchenxc/simpool/compare/v0.3.0...v0.4.0) (2026-11-10)
 
 
