@@ -84,7 +84,7 @@ test("a free device is shut down once idle past idleShutdownMinutes, at most eve
   const { pool, sims, clock, worktree } = fixture();
   const a = worktree("a");
   const held = pool.lease("ios", { owner: a, label: "a" });
-  pool.release(a, { keepBooted: true });
+  pool.release(a);
   assert.deepEqual(sims.shutdowns, []);
 
   clock.now += 10 * MINUTE;
@@ -130,17 +130,33 @@ test("release frees only your own lease unless forced", () => {
   assert.deepEqual(pool.release(a), []);
 });
 
-test("release shuts the device down unless asked to keep it booted", () => {
+test("release keeps the device warm unless asked to shut it down", () => {
   const { pool, sims, emus, worktree } = fixture();
   const a = worktree("a");
   const ios = pool.lease("ios", { owner: a, label: "a" });
-  const android = pool.lease("android", { owner: a, label: "a" });
-  assert.deepEqual(pool.release(a), ["ios-1", "android-1"]);
-  assert.deepEqual([sims.shutdowns, emus.shutdowns], [[ios.id], [android.id]]);
+  pool.release(a);
+  assert.deepEqual(sims.shutdowns, []);
 
   pool.lease("ios", { owner: a, label: "a" });
-  pool.release(a, { keepBooted: true });
-  assert.deepEqual(sims.shutdowns, [ios.id]);
+  const android = pool.lease("android", { owner: a, label: "a" });
+  assert.deepEqual(pool.release(a, { shutdown: true }), ["ios-1", "android-1"]);
+  assert.deepEqual([sims.shutdowns, emus.shutdowns], [[ios.id], [android.id]]);
+});
+
+test("a re-lease gets your last device back, and others leave it warm for you", () => {
+  const { pool, worktree } = fixture({ platforms: { ios: { size: 3, portBase: 8081 } } });
+  const a = worktree("a");
+  const b = worktree("b");
+  pool.lease("ios", { owner: worktree("x"), label: "x" });
+  const mine = pool.lease("ios", { owner: a, label: "a" });
+  assert.equal(mine.slot, "ios-2");
+  pool.release(a);
+
+  // b takes the never-used ios-3 rather than a's just-released, still-booted ios-2.
+  assert.equal(pool.lease("ios", { owner: b, label: "b" }).slot, "ios-3");
+  pool.release(b);
+  // a comes back to ios-2 even though ios-3 is free too.
+  assert.equal(pool.lease("ios", { owner: a, label: "a" }).id, mine.id);
 });
 
 test("a deleted simulator is recreated for its slot", () => {

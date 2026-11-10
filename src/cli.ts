@@ -15,7 +15,7 @@ Usage:
   simpool lease <platform> [<identity>] [--label <name>] [--agent <name>] [--json] [--no-boot]
   simpool challenge <slot> [<identity>] [--json]
   simpool renew [<identity>]
-  simpool release [<identity>] [--slot <slot> [--force]] [--keep-booted]
+  simpool release [<identity>] [--slot <slot> [--force]] [--shutdown]
   simpool status [--json]
   simpool gc
   simpool log [--since <30m|6h|2d>] [--event <kind,…>] [-n <count>] [--json]
@@ -109,9 +109,9 @@ function main(argv: string[]): void {
       json: { type: "boolean" },
       "no-boot": { type: "boolean" },
       force: { type: "boolean" },
-      "keep-booted": { type: "boolean" },
-      // Shutting down is the default now; still accepted so older scripts keep working.
       shutdown: { type: "boolean" },
+      // Keeping the device booted is the default again; still accepted for 0.4 scripts.
+      "keep-booted": { type: "boolean" },
       claude: { type: "boolean" },
       codex: { type: "boolean" },
       remove: { type: "boolean" },
@@ -181,7 +181,7 @@ function main(argv: string[]): void {
       return;
     }
     case "release": {
-      const slots = pool.release(owner, { slot: values.slot, force: values.force, keepBooted: values["keep-booted"] });
+      const slots = pool.release(owner, { slot: values.slot, force: values.force, shutdown: values.shutdown });
       info(slots.length ? `Released ${slots.join(", ")}` : "Nothing to release.");
       return;
     }

@@ -70,17 +70,25 @@ another agent may be using.
 - Never run `simpool release --slot <other> --force`; that override is for
   the user.
 
-## 4. Release when done
+## 4. Release when the whole job is done
 
-When your simulator or emulator work is finished, and always before you
-report the task as done, release your devices:
+Keep your lease for as long as the user may still ask you to check something
+on the device. Do **not** release after each fix or verification inside a
+conversation: the next request would boot the device again, reconnect Metro
+and lose the app's state.
+
+Release once the work is really over:
+
+- the user says they are done with it, or moves you to unrelated work;
+- the change has landed (PR opened or merged) and no more checks are pending;
+- you are about to delete the worktree.
 
 ```bash
-simpool release                # free this worktree's devices and shut them down
-simpool release --keep-booted  # free them but leave them running (the user asked to keep it open)
+simpool release             # free this worktree's devices; they stay warm for a while
+simpool release --shutdown  # …and shut them down right away (the user wants the memory back)
 ```
 
-A running simulator or emulator costs the user several GB of memory, so do
-not skip this. simpool also frees leases idle past the TTL and shuts down
-devices nobody holds, but that only happens the next time any agent runs
-`simpool lease` or `simpool status`.
+Releasing early costs little: a released device stays booted for 15 minutes
+and goes back to the same worktree if it leases again. Forgetting is handled
+too: a lease idle for an hour is freed and a device nobody holds is shut down
+the next time any agent runs `simpool lease` or `simpool status`.
