@@ -132,6 +132,19 @@ export class Pool {
     if (ms >= 1000) this.log({ event: "boot", slot: holding.slot, device: holding.id, ms });
   }
 
+  /**
+   * The free slot for a new lease: the claimant's own last device first (released minutes
+   * ago, it is still booted with the app installed), then the one free the longest, so
+   * other worktrees' recently released devices stay warm for them.
+   */
+  private pickFree(state: State, slots: string[], owner: string): string | undefined {
+    const free = slots.filter((slot) => !state.leases[slot]);
+    const mine = free.find((slot) => state.slots[slot]?.lastOwner === owner);
+    if (mine) return mine;
+    // Never-created and pre-freedAt slots count as free the longest; ties keep slot order.
+    return free.sort((a, b) => (state.slots[a]?.freedAt ?? 0) - (state.slots[b]?.freedAt ?? 0))[0];
+  }
+
   private heldBy(state: State, owner: string, platform: Platform): string | undefined {
     return this.slotIds(platform).find((slot) => state.leases[slot]?.owner === owner);
   }
@@ -171,6 +184,7 @@ export class Pool {
   private assign(state: State, slot: string, claimant: Claimant): Holding {
     const device = this.ensureSlot(state, slot);
     delete device.freedAt;
+    device.lastOwner = claimant.owner;
     const { id } = device;
     const now = this.now();
     const lease: Lease = { ...claimant, port: this.port(slot), leasedAt: now, renewedAt: now };
@@ -203,7 +217,7 @@ export class Pool {
         return this.holding(state, mine);
       }
       const slots = this.slotIds(platform);
-      const free = slots.find((slot) => !state.leases[slot]);
+      const free = this.pickFree(state, slots, claimant.owner);
       if (free) return this.assign(state, free, claimant);
 
       for (const slot of slots) {
@@ -258,8 +272,12 @@ export class Pool {
     });
   }
 
-  /** Releases the owner's leases, or one slot, and shuts their devices down. Another owner's slot needs force. */
-  release(owner: string, options: { slot?: string; force?: boolean; keepBooted?: boolean } = {}): string[] {
+  /**
+   * Releases the owner's leases, or one slot. Another owner's slot needs force. Devices stay
+   * booted so a quick re-lease is free; gc shuts them down after idleShutdownMinutes, or
+   * `shutdown` does it now.
+   */
+  release(owner: string, options: { slot?: string; force?: boolean; shutdown?: boolean } = {}): string[] {
     const released = withState(this.config.home, (state) => {
       let slots: string[];
       if (options.slot) {
@@ -282,7 +300,7 @@ export class Pool {
       }
       return slots.map((slot) => ({ slot, id: state.slots[slot]?.id }));
     });
-    if (!options.keepBooted) {
+    if (options.shutdown) {
       for (const { slot, id } of released) if (id) this.shutdown(slot, id, "released");
     }
     return released.map(({ slot }) => slot);

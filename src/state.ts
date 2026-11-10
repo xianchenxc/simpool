@@ -10,6 +10,8 @@ export interface Slot {
   aliases?: string[];
   /** When the slot's last lease ended; undefined while leased. */
   freedAt?: number;
+  /** Who held the slot last, so they get the same (often still warm) device back. */
+  lastOwner?: string;
 }
 
 export interface Lease {

@@ -66,6 +66,5 @@ test("the pool logs leases, renewals, refusals, gc, shutdowns, releases and devi
     ["shutdown", "ios-1", undefined, undefined, "stale"],
     ["lease", "ios-1", "c", undefined, undefined],
     ["release", "ios-1", "c", undefined, undefined],
-    ["shutdown", "ios-1", undefined, undefined, "released"],
   ]);
 });

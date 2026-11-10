@@ -27,8 +27,9 @@ $ simpool lease ios
   sits idle past the TTL. `lease` and `status` free stale leases on the way
   (at most every 5 minutes) and shut down devices nobody holds; live holders
   are never displaced.
-- 💤 **Frugal.** `release` shuts the device down, and a device left free for
-  15 minutes is shut down too, so idle simulators do not eat your RAM.
+- 💤 **Frugal, not cold.** A released device stays booted for 15 minutes and
+  goes back to the same worktree if it leases again, so releasing early costs
+  nothing; after that it is shut down, so idle simulators do not eat your RAM.
 - 🔌 **A port per slot.** `ios-N` gets port `8080 + N`, `android-N` gets
   `8090 + N`, for Metro or any dev server, so parallel bundlers never collide.
 - 🧮 **Bounded.** A fixed pool (3 simulators, 2 emulators by default) instead
@@ -83,7 +84,7 @@ npx expo run:android --device simpool_android_1 --port 8091
 
 simpool status                                  # who holds what
 simpool challenge ios-1                         # take over a stale lease
-simpool release [--keep-booted]                 # done: free the device and shut it down
+simpool release [--shutdown]                    # done: free the device (it stays warm 15 min)
 simpool gc                                      # free stale leases, shut down idle devices now
 simpool log --since 6h                          # what happened: leases, reclaims, denials, boots
 simpool log --event deny,refuse -n 20 --json    # filter by kind, newest last
